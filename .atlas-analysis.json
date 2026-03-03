@@ -1,0 +1,70 @@
+{
+  "projectType": "saas",
+  "projectName": "EmptyClassroom",
+  "projectDescription": "A web application that helps Boston University students find available classrooms to study in by displaying real-time room availability across campus buildings.",
+  "theme": "palm",
+  "primaryColor": "#CC0000",
+  "lightColor": "#E85D75",
+  "darkColor": "#8B0000",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": [
+          "introduction",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Features",
+        "pages": [
+          "features/search",
+          "features/refresh",
+          "features/buildings"
+        ]
+      },
+      {
+        "group": "Technical",
+        "pages": [
+          "technical/architecture",
+          "technical/data-sources",
+          "technical/caching"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "pages": [
+          "api/overview",
+          "api/endpoints/open-classrooms",
+          "api/endpoints/refresh",
+          "api/endpoints/cooldown-status",
+          "api/endpoints/last-updated"
+        ]
+      },
+      {
+        "group": "Contributing",
+        "pages": [
+          "contributing/setup",
+          "contributing/frontend",
+          "contributing/backend"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Real-time classroom availability for 70+ classrooms across CAS and CGS buildings",
+    "Search by building code or room number",
+    "Smart refresh with cooldown protection",
+    "Redis-based caching for performance",
+    "Automatic data updates based on business hours",
+    "Responsive Next.js frontend with React 19"
+  ],
+  "publicApiSurface": [
+    "GET /api/open-classrooms - Returns all classroom availability organized by building",
+    "POST /api/refresh - Triggers manual data refresh with 30-minute cooldown",
+    "GET /api/cooldown-status - Returns current cooldown status and remaining time",
+    "GET /api/last-updated - Returns timestamp of last data update",
+    "FastAPI backend at emptyclassroom-production.up.railway.app",
+    "Next.js frontend at emptyclassroom.com"
+  ]
+}
