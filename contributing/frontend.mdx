@@ -1,0 +1,456 @@
+---
+title: Frontend Development Guide
+description: Guide to developing the Next.js frontend for EmptyClassroom
+---
+
+The EmptyClassroom frontend is built with Next.js 15, React 19, TypeScript, and Tailwind CSS.
+
+## Tech Stack
+
+- **Framework**: Next.js 15.5.9 (App Router)
+- **UI Library**: React 19.0.0
+- **Language**: TypeScript 5.x
+- **Styling**: Tailwind CSS 3.4.1
+- **Components**: Radix UI Accordion
+- **Analytics**: Vercel Analytics
+
+## Project Structure
+
+```
+frontend/
+├── app/
+│   ├── api/                    # API route handlers
+│   │   ├── cooldown-status/    # Check refresh cooldown
+│   │   ├── open-classrooms/    # Get classroom data
+│   │   └── refresh/            # Trigger data refresh
+│   ├── components/             # React components
+│   │   ├── BuildingAccordion.tsx
+│   │   ├── BuildingsContent.tsx
+│   │   ├── NotesTooltip.tsx
+│   │   ├── RefreshButton.tsx
+│   │   └── SearchBar.tsx
+│   ├── layout.tsx              # Root layout
+│   └── page.tsx                # Home page
+├── public/                     # Static assets
+├── tailwind.config.ts          # Tailwind configuration
+├── tsconfig.json              # TypeScript configuration
+├── next.config.ts             # Next.js configuration
+└── package.json               # Dependencies
+```
+
+## Development Workflow
+
+<Steps>
+  <Step title="Start the development server">
+    ```bash
+    npm run dev
+    ```
+
+    The app will be available at `http://localhost:3000` with hot module replacement enabled.
+  </Step>
+
+  <Step title="Make your changes">
+    Edit files in the `app/` directory. Changes will be reflected immediately in the browser.
+  </Step>
+
+  <Step title="Run linting">
+    ```bash
+    npm run lint
+    ```
+
+    This uses ESLint with Next.js configuration (`eslint-config-next`).
+  </Step>
+
+  <Step title="Build for production">
+    ```bash
+    npm run build
+    ```
+
+    Test the production build locally:
+    ```bash
+    npm start
+    ```
+  </Step>
+</Steps>
+
+## Key Components
+
+### BuildingsContent
+
+The main component that fetches and displays classroom data.
+
+**Location**: `app/components/BuildingsContent.tsx`
+
+**Responsibilities**:
+- Fetches data from `/api/open-classrooms`
+- Manages search state and filtering
+- Renders building accordions with classroom availability
+
+### BuildingAccordion
+
+Displays classrooms for a specific building using Radix UI Accordion.
+
+**Location**: `app/components/BuildingAccordion.tsx`
+
+**Props**:
+- Building data (code, name, classrooms)
+- Availability information for each classroom
+
+### RefreshButton
+
+Handles manual data refresh with cooldown management.
+
+**Location**: `app/components/RefreshButton.tsx`
+
+**Features**:
+- Calls `/api/refresh` endpoint
+- Checks cooldown status via `/api/cooldown-status`
+- Displays remaining cooldown time
+- Shows success/error notifications
+
+### SearchBar
+
+Provides filtering by building code and room number.
+
+**Location**: `app/components/SearchBar.tsx`
+
+**Features**:
+- Real-time search filtering
+- Supports building codes (CAS, CGS)
+- Supports room numbers
+
+## API Routes
+
+The frontend includes API routes that proxy requests to the backend.
+
+### GET `/api/open-classrooms`
+
+**Location**: `app/api/open-classrooms/route.ts`
+
+Fetches classroom availability data from the backend.
+
+**Response**:
+```json
+{
+  "buildings": {
+    "CAS": {
+      "code": "CAS",
+      "name": "College of Arts & Sciences",
+      "classrooms": [
+        {
+          "id": "342",
+          "name": "116",
+          "availability": [
+            {
+              "start_time": "09:00",
+              "end_time": "10:30"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "last_updated": "2026-03-03T10:00:00-05:00"
+}
+```
+
+### POST `/api/refresh`
+
+**Location**: `app/api/refresh/route.ts`
+
+Triggers a manual refresh of classroom data.
+
+**Response**:
+```json
+{
+  "message": "Data refreshed successfully",
+  "timestamp": "2026-03-03T10:30:00-05:00"
+}
+```
+
+**Error (429 - Cooldown Active)**:
+```json
+{
+  "detail": "Refresh cooldown active. Please wait 15.5 more minutes."
+}
+```
+
+### GET `/api/cooldown-status`
+
+**Location**: `app/api/cooldown-status/route.ts`
+
+Checks if the refresh cooldown is active.
+
+**Response**:
+```json
+{
+  "in_cooldown": true,
+  "remaining_minutes": 15.5
+}
+```
+
+## Styling with Tailwind CSS
+
+### Configuration
+
+**Location**: `tailwind.config.ts`
+
+```typescript
+export default {
+  content: [
+    "./pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "./components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        background: "var(--background)",
+        foreground: "var(--foreground)",
+      },
+    },
+  },
+  plugins: [],
+}
+```
+
+### Global Styles
+
+Global styles and CSS variables are defined in `app/globals.css`.
+
+### Component Styling
+
+Use Tailwind utility classes directly in components:
+
+```tsx
+<div className="flex items-center justify-between p-4 bg-gray-100 rounded-lg">
+  <h2 className="text-xl font-bold">Classroom Name</h2>
+  <span className="text-sm text-gray-600">Available</span>
+</div>
+```
+
+## TypeScript Configuration
+
+**Location**: `tsconfig.json`
+
+The project uses strict TypeScript settings:
+
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true
+  }
+}
+```
+
+## Environment Variables
+
+Create a `.env.local` file in the `frontend/` directory:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+<Note>
+  Variables prefixed with `NEXT_PUBLIC_` are exposed to the browser. Use this prefix for any variables needed in client-side code.
+</Note>
+
+## Adding New Components
+
+<Steps>
+  <Step title="Create the component file">
+    Create a new file in `app/components/`:
+
+    ```bash
+    touch app/components/MyComponent.tsx
+    ```
+  </Step>
+
+  <Step title="Define the component">
+    ```tsx
+    export default function MyComponent() {
+      return (
+        <div className="p-4">
+          <h2>My Component</h2>
+        </div>
+      )
+    }
+    ```
+  </Step>
+
+  <Step title="Import and use the component">
+    ```tsx
+    import MyComponent from './components/MyComponent'
+
+    export default function Page() {
+      return (
+        <main>
+          <MyComponent />
+        </main>
+      )
+    }
+    ```
+  </Step>
+</Steps>
+
+## Working with the Backend API
+
+### Fetching Data
+
+Use the native `fetch` API or create API route handlers:
+
+```tsx
+'use client'
+
+import { useEffect, useState } from 'react'
+
+export default function DataComponent() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/open-classrooms')
+      .then(res => res.json())
+      .then(data => {
+        setData(data)
+        setLoading(false)
+      })
+      .catch(error => {
+        console.error('Error fetching data:', error)
+        setLoading(false)
+      })
+  }, [])
+
+  if (loading) return <div>Loading...</div>
+  if (!data) return <div>No data available</div>
+
+  return <div>{/* Render your data */}</div>
+}
+```
+
+### Environment-Based API URLs
+
+Use environment variables for different environments:
+
+```tsx
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+fetch(`${API_URL}/api/open-classrooms`)
+```
+
+## Building for Production
+
+<Steps>
+  <Step title="Run the build command">
+    ```bash
+    npm run build
+    ```
+
+    This creates an optimized production build in the `.next/` directory.
+  </Step>
+
+  <Step title="Test the production build">
+    ```bash
+    npm start
+    ```
+
+    The production server runs on port 3000 by default.
+  </Step>
+
+  <Step title="Analyze the build">
+    Check the build output for:
+    - Bundle sizes
+    - Static vs. dynamic pages
+    - Performance warnings
+  </Step>
+</Steps>
+
+## Best Practices
+
+### Performance
+
+- Use Next.js Image component for optimized images
+- Implement proper loading states
+- Minimize client-side JavaScript with Server Components
+- Use dynamic imports for code splitting
+
+### Type Safety
+
+- Define TypeScript interfaces for all API responses
+- Use strict type checking
+- Avoid `any` types
+
+```tsx
+interface Classroom {
+  id: string
+  name: string
+  availability: TimeSlot[]
+}
+
+interface TimeSlot {
+  start_time: string
+  end_time: string
+}
+```
+
+### Component Organization
+
+- Keep components small and focused
+- Extract reusable logic into custom hooks
+- Use composition over inheritance
+- Separate server and client components clearly
+
+## Common Tasks
+
+### Adding a New Page
+
+```bash
+touch app/about/page.tsx
+```
+
+```tsx
+export default function About() {
+  return <div>About Page</div>
+}
+```
+
+The page will be automatically available at `/about`.
+
+### Adding a New API Route
+
+```bash
+mkdir -p app/api/my-endpoint
+touch app/api/my-endpoint/route.ts
+```
+
+```tsx
+export async function GET() {
+  return Response.json({ message: 'Hello from API' })
+}
+```
+
+### Debugging
+
+1. Use React DevTools browser extension
+2. Check the browser console for errors
+3. Use `console.log()` for debugging (remove before committing)
+4. Check Network tab for API request/response issues
+
+## Resources
+
+- [Next.js Documentation](https://nextjs.org/docs)
+- [React Documentation](https://react.dev)
+- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
+- [TypeScript Documentation](https://www.typescriptlang.org/docs)
+- [Radix UI Documentation](https://www.radix-ui.com/docs)

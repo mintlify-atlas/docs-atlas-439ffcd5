@@ -1,0 +1,625 @@
+---
+title: Backend Development Guide
+description: Guide to developing the FastAPI backend for EmptyClassroom
+---
+
+The EmptyClassroom backend is built with FastAPI, Redis, and aiohttp for fetching and caching classroom availability data.
+
+## Tech Stack
+
+- **Framework**: FastAPI 0.115.6
+- **ASGI Server**: Uvicorn 0.32.1
+- **Cache**: Redis 5.2.0
+- **HTTP Client**: aiohttp 3.11.9
+- **Scheduling**: APScheduler 3.11.0
+- **Environment**: python-dotenv 1.0.1
+
+## Project Structure
+
+```
+backend/
+├── main.py                    # FastAPI application & endpoints
+├── config.py                  # Configuration & constants
+├── cache.py                   # Redis cache management
+├── classroom_availability.py  # Classroom data fetching logic
+├── requirements.txt           # Python dependencies
+├── Procfile                   # Production deployment config
+├── .env                       # Environment variables (gitignored)
+└── .gitignore
+```
+
+## Core Files
+
+### main.py
+
+The main FastAPI application with all API endpoints.
+
+**Key Features**:
+- CORS middleware configuration
+- Startup event handler for Redis connection
+- Automatic cache refresh on wake-up
+- REST API endpoints for classroom data
+
+**Endpoints**:
+- `GET /` - Health check
+- `GET /api/open-classrooms` - Get classroom availability
+- `POST /api/refresh` - Manually refresh data (30-min cooldown)
+- `GET /api/last-updated` - Get last refresh timestamp
+- `GET /api/cooldown-status` - Check refresh cooldown status
+
+### config.py
+
+Configuration file with environment variables and constants.
+
+**Environment Variables**:
+```python
+REDIS_URL = os.getenv('REDIS_URL')  # Redis connection URL
+API_URL = os.getenv('API_URL')      # Backend API URL
+```
+
+**Constants**:
+```python
+REDIS_TIMEOUT = 5                    # seconds
+CACHE_KEY = 'classrooms:availability'
+CACHE_EXPIRY = 24 * 60 * 60          # 24 hours
+MIN_GAP_MINUTES = 28                 # Minimum gap for availability
+REFRESH_COOLDOWN_MINUTES = 30        # Refresh cooldown period
+```
+
+**Data Structures**:
+- `BUILDINGS` - Dictionary of building codes with names and hours
+- `CLASSROOMS` - Dictionary of 70+ classrooms with IDs, names, and building codes
+
+### cache.py
+
+Redis cache initialization and update logic.
+
+**Key Components**:
+```python
+rd = redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+    socket_timeout=REDIS_TIMEOUT
+)
+
+async def update_cache():
+    # Fetches classroom availability and updates Redis
+```
+
+### classroom_availability.py
+
+Logic for fetching and processing classroom availability data from external APIs.
+
+**Location**: `backend/classroom_availability.py`
+
+## Development Workflow
+
+<Steps>
+  <Step title="Activate virtual environment">
+    ```bash
+    source venv/bin/activate  # macOS/Linux
+    # or
+    venv\Scripts\activate     # Windows
+    ```
+  </Step>
+
+  <Step title="Ensure Redis is running">
+    ```bash
+    redis-cli ping
+    # Should return: PONG
+    ```
+  </Step>
+
+  <Step title="Start the development server">
+    ```bash
+    uvicorn main:app --reload --host 0.0.0.0 --port 8000
+    ```
+
+    The `--reload` flag enables auto-reload on code changes.
+  </Step>
+
+  <Step title="Test endpoints">
+    ```bash
+    # Health check
+    curl http://localhost:8000/
+
+    # Get classroom data
+    curl http://localhost:8000/api/open-classrooms
+
+    # Trigger refresh
+    curl -X POST http://localhost:8000/api/refresh
+
+    # Check cooldown status
+    curl http://localhost:8000/api/cooldown-status
+    ```
+  </Step>
+</Steps>
+
+## API Endpoints
+
+### GET `/`
+
+**Description**: Health check endpoint
+
+**Response**:
+```json
+"Hello World"
+```
+
+### GET `/api/open-classrooms`
+
+**Description**: Fetches classroom availability data organized by building
+
+**Response**:
+```json
+{
+  "buildings": {
+    "CAS": {
+      "code": "CAS",
+      "name": "College of Arts & Sciences",
+      "classrooms": [
+        {
+          "id": "342",
+          "name": "116",
+          "availability": [
+            {
+              "start_time": "09:00",
+              "end_time": "10:30",
+              "duration_minutes": 90
+            }
+          ]
+        }
+      ]
+    },
+    "CGS": {
+      "code": "CGS",
+      "name": "College of General Studies",
+      "classrooms": []
+    }
+  },
+  "last_updated": "2026-03-03T10:00:00-05:00"
+}
+```
+
+**Implementation**:
+```python
+@app.get('/api/open-classrooms')
+async def get_classroom_availability_by_building():
+    # Check cache first
+    cache = rd.get('classrooms:availability')
+    
+    if cache:
+        availability_data = json.loads(cache)
+    else:
+        # Fetch new data and cache it
+        availability_data = await get_classroom_availability()
+        rd.set('classrooms:availability', json.dumps(availability_data), ex=CACHE_EXPIRY)
+    
+    # Organize by building and return
+```
+
+### POST `/api/refresh`
+
+**Description**: Manually triggers a data refresh with 30-minute cooldown
+
+**Success Response (200)**:
+```json
+{
+  "message": "Data refreshed successfully",
+  "timestamp": "2026-03-03T10:30:00-05:00"
+}
+```
+
+**Error Response (429 - Too Many Requests)**:
+```json
+{
+  "detail": "Refresh cooldown active. Please wait 15.5 more minutes."
+}
+```
+
+**Implementation**:
+```python
+@app.post('/api/refresh')
+async def refresh_data():
+    # Check cooldown
+    last_refresh_str = rd.get('classrooms:last_refresh')
+    
+    if last_refresh_str:
+        last_refresh = datetime.fromisoformat(last_refresh_str)
+        time_since_refresh = now - last_refresh
+        
+        if time_since_refresh < timedelta(minutes=REFRESH_COOLDOWN_MINUTES):
+            raise HTTPException(status_code=429, detail=...)
+    
+    # Update cache
+    await update_cache()
+    rd.set('classrooms:last_refresh', now.isoformat(), ex=CACHE_EXPIRY)
+```
+
+### GET `/api/last-updated`
+
+**Description**: Returns the timestamp of the last data refresh
+
+**Response**:
+```json
+{
+  "last_updated": "2026-03-03T10:00:00-05:00"
+}
+```
+
+### GET `/api/cooldown-status`
+
+**Description**: Checks if the refresh cooldown is active
+
+**Response**:
+```json
+{
+  "in_cooldown": true,
+  "remaining_minutes": 15.5
+}
+```
+
+## Redis Cache Management
+
+### Cache Keys
+
+```python
+'classrooms:availability'  # Classroom data cache
+'classrooms:last_refresh'  # Last refresh timestamp
+```
+
+### Cache Operations
+
+**Setting Cache**:
+```python
+rd.set(CACHE_KEY, json.dumps(data), ex=CACHE_EXPIRY)
+```
+
+**Getting Cache**:
+```python
+cache = rd.get(CACHE_KEY)
+if cache:
+    data = json.loads(cache)
+```
+
+**Cache Expiry**:
+- Data cache: 24 hours (`CACHE_EXPIRY`)
+- Refresh timestamp: 24 hours
+
+### Connection Configuration
+
+**Location**: `cache.py:7`
+
+```python
+rd = redis.from_url(
+    REDIS_URL,
+    decode_responses=True,  # Automatically decode bytes to strings
+    socket_timeout=REDIS_TIMEOUT  # 5 seconds
+)
+```
+
+## CORS Configuration
+
+**Location**: `main.py:14`
+
+The backend allows all origins for development:
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],      # Allow all origins
+    allow_credentials=True,
+    allow_methods=['*'],      # Allow all HTTP methods
+    allow_headers=['*'],      # Allow all headers
+)
+```
+
+<Warning>
+  In production, restrict `allow_origins` to specific frontend domains for security.
+</Warning>
+
+## Startup Behavior
+
+**Location**: `main.py:40`
+
+The application includes a startup event handler:
+
+```python
+@app.on_event('startup')
+async def startup_event():
+    # Wait for Redis connection (5 retries)
+    for i in range(5):
+        try:
+            rd.ping()
+            break
+        except Exception:
+            await asyncio.sleep(1)
+    
+    # Check if refresh needed (new day or no data)
+    if should_refresh_on_wake():
+        await update_cache()
+        rd.set('classrooms:last_refresh', now.isoformat(), ex=CACHE_EXPIRY)
+```
+
+**Auto-refresh Logic**:
+- Refreshes data if it's a new day
+- Refreshes if no previous data exists
+- Prevents unnecessary refreshes on server restart
+
+## Environment Variables
+
+Create a `.env` file in the `backend/` directory:
+
+```env
+REDIS_URL=redis://localhost:6379
+API_URL=http://localhost:8000
+```
+
+**Loading Environment Variables**:
+
+**Location**: `config.py:1`
+
+```python
+import os
+from dotenv import load_dotenv
+
+if os.getenv("RAILWAY_ENV") is None:
+    load_dotenv()  # Only load .env in local development
+
+REDIS_URL = os.getenv('REDIS_URL')
+API_URL = os.getenv('API_URL')
+```
+
+<Note>
+  The `RAILWAY_ENV` check prevents loading `.env` in production environments like Railway, where environment variables are set directly.
+</Note>
+
+## Adding New Endpoints
+
+<Steps>
+  <Step title="Define the endpoint in main.py">
+    ```python
+    @app.get('/api/my-endpoint')
+    async def my_endpoint():
+        return {"message": "Hello from my endpoint"}
+    ```
+  </Step>
+
+  <Step title="Add business logic">
+    ```python
+    @app.get('/api/classrooms/{classroom_id}')
+    async def get_classroom_by_id(classroom_id: str):
+        if classroom_id not in CLASSROOMS:
+            raise HTTPException(status_code=404, detail="Classroom not found")
+        
+        return CLASSROOMS[classroom_id]
+    ```
+  </Step>
+
+  <Step title="Test the endpoint">
+    ```bash
+    curl http://localhost:8000/api/my-endpoint
+    ```
+  </Step>
+</Steps>
+
+## Working with Redis
+
+### Testing Redis Connection
+
+```python
+try:
+    rd.ping()
+    print("Redis connected")
+except redis.RedisError as e:
+    print(f"Redis error: {e}")
+```
+
+### Common Redis Operations
+
+```python
+# Set with expiration
+rd.set('key', 'value', ex=3600)  # Expires in 1 hour
+
+# Get value
+value = rd.get('key')
+
+# Delete key
+rd.delete('key')
+
+# Check if key exists
+if rd.exists('key'):
+    print("Key exists")
+
+# Set expiration on existing key
+rd.expire('key', 3600)
+```
+
+## Error Handling
+
+### HTTP Exceptions
+
+```python
+from fastapi import HTTPException
+
+@app.get('/api/example')
+async def example():
+    if error_condition:
+        raise HTTPException(
+            status_code=400,
+            detail="Bad request: invalid parameters"
+        )
+```
+
+### Redis Error Handling
+
+```python
+try:
+    rd.set('key', 'value')
+except redis.RedisError as e:
+    print(f'Redis operation failed: {e}')
+    raise HTTPException(status_code=503, detail="Cache unavailable")
+```
+
+## Deployment
+
+### Production Configuration
+
+**Procfile** (for Railway/Heroku):
+```
+web: uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+### Environment Variables for Production
+
+Set these in your hosting platform:
+
+```bash
+REDIS_URL=redis://your-redis-host:6379
+API_URL=https://your-backend-url.com
+RAILWAY_ENV=production  # Or equivalent for your platform
+```
+
+## Testing
+
+### Manual Testing
+
+```bash
+# Health check
+curl http://localhost:8000/
+
+# Get data (should hit cache after first request)
+curl http://localhost:8000/api/open-classrooms
+
+# Trigger refresh
+curl -X POST http://localhost:8000/api/refresh
+
+# Try refreshing again (should get 429 error)
+curl -X POST http://localhost:8000/api/refresh
+
+# Check cooldown
+curl http://localhost:8000/api/cooldown-status
+```
+
+### Monitoring Redis
+
+```bash
+# Connect to Redis CLI
+redis-cli
+
+# View all keys
+KEYS *
+
+# Get cache data
+GET classrooms:availability
+
+# Get last refresh time
+GET classrooms:last_refresh
+
+# Check TTL (time to live)
+TTL classrooms:availability
+```
+
+## Performance Optimization
+
+### Caching Strategy
+
+- **Cache Duration**: 24 hours for classroom data
+- **Cache on Startup**: Auto-refresh on new day
+- **Manual Refresh**: 30-minute cooldown to prevent abuse
+
+### Redis Connection Pooling
+
+Redis client automatically manages connection pooling:
+
+```python
+rd = redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+    socket_timeout=REDIS_TIMEOUT,
+    # Connection pool is created automatically
+)
+```
+
+## Debugging
+
+### Enable Debug Mode
+
+```bash
+uvicorn main:app --reload --log-level debug
+```
+
+### Check Logs
+
+The application prints logs for:
+- Redis connection status
+- Cache hits/misses
+- Refresh operations
+- Error conditions
+
+```python
+print(f'Cache hit')  # main.py:154
+print(f'Cache miss - fetching new data')  # main.py:157
+```
+
+### Common Issues
+
+**Redis Connection Failed**
+```python
+# Check Redis status
+redis-cli ping
+
+# Verify REDIS_URL in .env
+echo $REDIS_URL
+```
+
+**CORS Errors**
+```python
+# Verify CORS middleware is configured
+# Check browser console for specific CORS errors
+# Ensure frontend origin is allowed
+```
+
+## Best Practices
+
+### Async/Await
+
+Always use `async`/`await` for I/O operations:
+
+```python
+@app.get('/api/data')
+async def get_data():
+    # Use async for external API calls
+    data = await fetch_external_data()
+    return data
+```
+
+### Error Messages
+
+Provide clear error messages:
+
+```python
+raise HTTPException(
+    status_code=429,
+    detail=f"Refresh cooldown active. Please wait {remaining:.1f} more minutes."
+)
+```
+
+### Configuration Management
+
+Keep all configuration in `config.py`:
+
+```python
+# Good
+from config import REFRESH_COOLDOWN_MINUTES
+
+# Bad
+REFRESH_COOLDOWN = 30  # Hardcoded in main.py
+```
+
+## Resources
+
+- [FastAPI Documentation](https://fastapi.tiangolo.com)
+- [Redis Python Client](https://redis-py.readthedocs.io)
+- [aiohttp Documentation](https://docs.aiohttp.org)
+- [Uvicorn Documentation](https://www.uvicorn.org)

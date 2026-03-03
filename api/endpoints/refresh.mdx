@@ -1,0 +1,183 @@
+---
+title: 'POST /api/refresh'
+description: 'Manually trigger a data refresh for classroom availability'
+---
+
+## Endpoint
+
+```
+POST /api/refresh
+```
+
+Triggers a manual refresh of classroom availability data by fetching the latest information from BU's scheduling system. This endpoint is subject to a 30-minute cooldown to prevent excessive requests.
+
+## Request
+
+This endpoint does not require any parameters or request body.
+
+```bash cURL
+curl -X POST https://emptyclassroom-production.up.railway.app/api/refresh
+```
+
+## Response
+
+<ResponseField name="message" type="string" required>
+  Success message confirming the data refresh
+</ResponseField>
+
+<ResponseField name="timestamp" type="string" required>
+  ISO 8601 timestamp of when the refresh was completed (in America/New_York timezone)
+</ResponseField>
+
+## Success Response
+
+```json 200 OK
+{
+  "message": "Data refreshed successfully",
+  "timestamp": "2026-03-03T14:30:00.123456-05:00"
+}
+```
+
+## Error Responses
+
+### Cooldown Active
+
+If a refresh was performed within the last 30 minutes, the endpoint returns a 429 error.
+
+<ResponseField name="429 Too Many Requests">
+  <Expandable title="Response Body">
+    <ResponseField name="detail" type="string" required>
+      Error message including the remaining cooldown time in minutes
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json 429 Too Many Requests
+{
+  "detail": "Refresh cooldown active. Please wait 15.3 more minutes."
+}
+```
+
+### Server Error
+
+If the refresh operation fails due to an internal error:
+
+<ResponseField name="500 Internal Server Error">
+  <Expandable title="Response Body">
+    <ResponseField name="detail" type="string" required>
+      Error message describing the failure
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json 500 Internal Server Error
+{
+  "detail": "Failed to refresh data"
+}
+```
+
+## Behavior
+
+### Cooldown Mechanism
+
+The endpoint implements a 30-minute cooldown to protect the upstream data source:
+
+1. When refresh is successful, the current timestamp is stored in Redis
+2. Subsequent refresh requests within 30 minutes are rejected with a 429 error
+3. The error message includes the exact remaining cooldown time
+4. After 30 minutes, the cooldown expires and refresh is allowed again
+
+### Data Updates
+
+When a refresh is successful:
+
+1. Fresh classroom availability data is fetched from BU's scheduling system
+2. The Redis cache is updated with new data (24-hour expiry)
+3. The `last_refresh` timestamp is updated
+4. All subsequent `/api/open-classrooms` requests will use the new data
+
+### Automatic Refresh
+
+The app also performs automatic refreshes:
+
+- **On startup**: If the cached data is from a previous day
+- **On wake**: If the app was sleeping and data is stale
+
+Manual refresh via this endpoint is only needed if you want to force a refresh within the same day.
+
+## Example Usage
+
+### Basic Refresh Request
+
+```javascript JavaScript
+const response = await fetch(
+  'https://emptyclassroom-production.up.railway.app/api/refresh',
+  { method: 'POST' }
+);
+
+if (response.ok) {
+  const data = await response.json();
+  console.log(`Refreshed at: ${data.timestamp}`);
+} else if (response.status === 429) {
+  const error = await response.json();
+  console.log(error.detail); // "Refresh cooldown active. Please wait X more minutes."
+}
+```
+
+### With Cooldown Check
+
+```javascript JavaScript
+// Check cooldown status first
+const statusResponse = await fetch(
+  'https://emptyclassroom-production.up.railway.app/api/cooldown-status'
+);
+const status = await statusResponse.json();
+
+if (!status.in_cooldown) {
+  // Safe to refresh
+  const refreshResponse = await fetch(
+    'https://emptyclassroom-production.up.railway.app/api/refresh',
+    { method: 'POST' }
+  );
+  const data = await refreshResponse.json();
+  console.log(data.message);
+} else {
+  console.log(`Wait ${status.remaining_minutes.toFixed(1)} more minutes`);
+}
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'https://emptyclassroom-production.up.railway.app/api/refresh'
+)
+
+if response.status_code == 200:
+    data = response.json()
+    print(f"Refreshed at: {data['timestamp']}")
+elif response.status_code == 429:
+    error = response.json()
+    print(error['detail'])
+```
+
+```bash cURL
+curl -X POST https://emptyclassroom-production.up.railway.app/api/refresh
+```
+
+## Best Practices
+
+<Tip>
+**Check cooldown status before refreshing** to avoid unnecessary 429 errors. Use the `/api/cooldown-status` endpoint to check if refresh is available.
+</Tip>
+
+<Warning>
+**Don't poll this endpoint.** The 30-minute cooldown is enforced to protect upstream services. If you need real-time updates, use the `/api/open-classrooms` endpoint which serves cached data efficiently.
+</Warning>
+
+## Notes
+
+- The cooldown timer is stored in Redis with the same 24-hour expiry as the cache
+- If Redis is cleared or restarted, the cooldown state is lost
+- The remaining time calculation is precise to one decimal place
+- The timestamp uses full ISO 8601 format including microseconds and timezone offset

@@ -1,0 +1,156 @@
+---
+title: Introduction
+description: Find empty classrooms to study in at Boston University
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="EmptyClassroom Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="EmptyClassroom Hero Dark"
+/>
+
+## Welcome to EmptyClassroom
+
+EmptyClassroom is a real-time classroom availability platform designed specifically for Boston University students. Find the perfect quiet space to study across campus by viewing live availability for 70+ classrooms in CAS and CGS buildings.
+
+## Core Features
+
+<CardGroup cols={2}>
+  <Card
+    title="Real-Time Availability"
+    icon="clock"
+    href="/features/buildings"
+  >
+    View all available time slots for each classroom throughout the day, updated automatically every minute
+  </Card>
+  <Card
+    title="Smart Search"
+    icon="magnifying-glass"
+    href="/features/search"
+  >
+    Search by building code (CAS, CGS), room number, or both with intelligent matching
+  </Card>
+  <Card
+    title="Live Data Refresh"
+    icon="rotate"
+    href="/features/refresh"
+  >
+    Refresh classroom data on-demand to get the latest availability from BU's scheduling system
+  </Card>
+  <Card
+    title="70+ Classrooms"
+    icon="building"
+    href="/features/buildings"
+  >
+    Coverage across College of Arts & Sciences and College of General Studies buildings
+  </Card>
+</CardGroup>
+
+## How It Works
+
+EmptyClassroom fetches data from Boston University's room reservation system and intelligently calculates available time slots based on:
+
+- Official class schedules
+- Room reservations and bookings
+- Building operating hours (CAS: 7am-11pm, CGS: 7am-9:30pm)
+- Minimum viable study time (30+ minute gaps)
+
+<Note>
+  **Important:** Displayed availability reflects official schedules only. Rooms may occasionally be occupied by unofficial meetings or study groups.
+</Note>
+
+## Coverage
+
+### College of Arts & Sciences (CAS)
+- **Operating Hours:** 7:00 AM - 11:00 PM
+- **Classrooms:** 50+ rooms across multiple floors
+- **Includes:** Lecture halls, seminar rooms, and specialized spaces like the Tsai Performance Center
+
+### College of General Studies (CGS)
+- **Operating Hours:** 7:00 AM - 9:30 PM  
+- **Classrooms:** 20+ rooms optimized for smaller class sizes
+- **Includes:** Standard classrooms and divisible spaces
+
+## Technical Stack
+
+<CodeGroup>
+
+```typescript Frontend
+// Next.js 14 with TypeScript
+// Real-time updates using React hooks
+
+const [buildings, setBuildings] = useState<OpenClassroomsResponse | null>(null);
+const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+
+useEffect(() => {
+  const response = await fetch('/api/open-classrooms');
+  const data = await response.json();
+  setBuildings(data.buildings);
+  setLastUpdated(data.last_updated);
+}, []);
+```
+
+```python Backend
+# FastAPI with Redis caching
+# Async data fetching from BU's API
+
+@app.get('/api/open-classrooms')
+async def get_classroom_availability_by_building():
+    cache = rd.get('classrooms:availability')
+    
+    if cache:
+        availability_data = json.loads(cache)
+    else:
+        availability_data = await get_classroom_availability()
+        rd.set('classrooms:availability', json.dumps(availability_data))
+    
+    return {"buildings": res, "last_updated": last_updated}
+```
+
+</CodeGroup>
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart Guide"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Learn how to find your first empty classroom in under 2 minutes
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api/overview"
+  >
+    Explore the API endpoints powering EmptyClassroom
+  </Card>
+  <Card
+    title="Building Guide"
+    icon="map"
+    href="/features/buildings"
+  >
+    View detailed information about each building and its classrooms
+  </Card>
+  <Card
+    title="GitHub Repository"
+    icon="github"
+    href="https://github.com/justin9668/EmptyClassroom"
+  >
+    Contribute to the project or report issues on GitHub
+  </Card>
+</CardGroup>
+
+## Community & Support
+
+Have a feature request or found a bug? We'd love to hear from you!
+
+- **Submit Feedback:** [TypeForm Request Form](https://form.typeform.com/to/t17kzOqs)
+- **GitHub Issues:** [Report technical issues](https://github.com/justin9668/EmptyClassroom/issues)
+- **Live Site:** [emptyclassroom.com](https://emptyclassroom.com)

@@ -1,0 +1,471 @@
+---
+title: Data Sources & API Integration
+description: How EmptyClassroom integrates with Boston University's 25Live scheduling API
+---
+
+## Overview
+
+EmptyClassroom fetches real-time classroom scheduling data from Boston University's **25Live** room scheduling system. The backend parses this data to calculate available time slots for each classroom.
+
+<Note>
+The BU 25Live API is an internal API used by the official BU scheduling website. EmptyClassroom acts as a read-only consumer of this public data.
+</Note>
+
+## BU 25Live API
+
+### API Endpoint
+
+The 25Live API endpoint is stored in the `API_URL` environment variable:
+
+```python backend/config.py
+API_URL = os.getenv('API_URL')
+# Example: https://25live.collegenet.com/25live/data/bu/run/...
+```
+
+<Warning>
+The exact API URL is not public in this documentation. It's configured via environment variables in Railway.
+</Warning>
+
+### Request Parameters
+
+For each classroom, we make a GET request with these parameters:
+
+```python backend/classroom_availability.py
+params = {
+    'obj_cache_accl': 0,              # Disable caching
+    'start_dt': date.isoformat(),     # Today's date (YYYY-MM-DD)
+    'comptype': 'availability_daily', # Daily availability view
+    'compsubject': 'location',        # Query by location (classroom)
+    'page_size': 100,                 # Max results per page
+    'space_id': space_id,             # Unique classroom ID
+    'include': 'closed blackouts pending related empty',  # Include all states
+    'caller': 'pro-AvailService.getData'  # API caller identifier
+}
+```
+
+<Accordion title="Parameter Breakdown">
+  - **obj_cache_accl: 0** - Forces fresh data (no stale cache)
+  - **start_dt** - The date to query (always today in America/New_York timezone)
+  - **comptype: availability_daily** - Returns a daily schedule view
+  - **compsubject: location** - Queries by room/location rather than event
+  - **space_id** - The unique identifier for each classroom (e.g., "342" for CAS 116)
+  - **include** - Returns closed periods, blackouts, pending reservations, and empty slots
+  - **caller** - Identifies the API consumer (matches the official BU website)
+</Accordion>
+
+### Response Format
+
+The API returns JSON with this structure:
+
+```json
+{
+  "subjects": [
+    {
+      "item_date": "2024-03-03T00:00:00",
+      "items": [
+        {
+          "start": 10.0,    // 10:00 AM (hours as float)
+          "end": 11.25,      // 11:15 AM
+          "event_name": "CS 101 Lecture",
+          "state": "confirmed"
+        },
+        {
+          "start": 13.5,     // 1:30 PM
+          "end": 15.0,       // 3:00 PM
+          "event_name": "MA 123 Recitation",
+          "state": "confirmed"
+        }
+      ]
+    }
+  ]
+}
+```
+
+<Note>
+Times are represented as **decimal hours** (e.g., 13.5 = 1:30 PM, 11.25 = 11:15 AM). The backend converts these to Python datetime objects for processing.
+</Note>
+
+## Data Fetching Implementation
+
+### Async HTTP Requests
+
+We use `aiohttp` to fetch data for all 77 classrooms concurrently:
+
+```python backend/classroom_availability.py
+async def fetch_classroom_data(session, space_id, date):
+    url = API_URL
+    params = {
+        'obj_cache_accl': 0,
+        'start_dt': date.isoformat(),
+        'comptype': 'availability_daily',
+        'compsubject': 'location',
+        'page_size': 100,
+        'space_id': space_id,
+        'include': 'closed blackouts pending related empty',
+        'caller': 'pro-AvailService.getData'
+    }
+    
+    try:
+        async with session.get(url, params=params) as response:
+            if response.status == 200:
+                return await response.json()
+            print(f'Failed to fetch data for space {space_id}: {response.status}')
+            return None
+    except Exception as e:
+        print(f'Error fetching data for space {space_id}: {str(e)}')
+        return None
+```
+
+### Concurrent Fetching
+
+All classroom data is fetched in parallel using `asyncio.gather`:
+
+```python backend/classroom_availability.py
+async def get_classroom_availability():
+    est = pytz.timezone('America/New_York')
+    today_date = datetime.now(est).date()
+    availability_data = {}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Create tasks for all classrooms
+            tasks = [
+                fetch_classroom_data(session, space_id, today_date) 
+                for space_id in CLASSROOMS.keys()
+            ]
+            
+            # Execute all requests concurrently
+            results = await asyncio.gather(*tasks)
+            
+            # Process results
+            for space_id, data in zip(CLASSROOMS.keys(), results):
+                if not data:
+                    availability_data[str(space_id)] = []
+                    continue
+                    
+                try:
+                    available_times = get_available_times(data, today_date, space_id)
+                    availability_data[str(space_id)] = [
+                        {
+                            'start': slot['start'].strftime('%H:%M:%S'),
+                            'end': slot['end'].strftime('%H:%M:%S')
+                        }
+                        for slot in available_times
+                    ] if available_times else []
+                except Exception as e:
+                    print(f'Error processing space {space_id}: {str(e)}')
+                    availability_data[str(space_id)] = []
+        
+        print('Successfully fetched classroom availability')
+        return availability_data
+    except Exception as e:
+        print(f'Error getting classroom availability: {str(e)}')
+        return {}
+```
+
+<Accordion title="Performance Benefits">
+  **Sequential (slow):** 77 classrooms × ~200ms per request = **15.4 seconds**
+  
+  **Concurrent (fast):** Max(all requests) ≈ **200-500ms total**
+  
+  Using `asyncio.gather` provides a **30-75x speedup** for data fetching.
+</Accordion>
+
+## Availability Calculation
+
+### Algorithm Overview
+
+The `get_available_times()` function calculates open slots using this logic:
+
+<Steps>
+  <Step title="Extract Today's Reservations">
+    Parse the API response to find all confirmed reservations for today
+  </Step>
+  
+  <Step title="Convert Time Format">
+    Convert decimal hours (e.g., 13.5) to datetime objects:
+    ```python
+    start_hours = float(item['start'])  # 13.5
+    start = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=start_hours)
+    # Result: 2024-03-03 13:30:00
+    ```
+  </Step>
+  
+  <Step title="Sort Reservations">
+    Sort all reservations by start time to process chronologically
+  </Step>
+  
+  <Step title="Find Gaps Between Reservations">
+    Iterate through sorted reservations and find gaps that meet the minimum duration requirement
+  </Step>
+  
+  <Step title="Apply Business Hours">
+    Only return slots within the building's operating hours (configured per building)
+  </Step>
+  
+  <Step title="Filter Short Gaps">
+    Remove slots shorter than `MIN_GAP_MINUTES` (28 minutes by default)
+  </Step>
+</Steps>
+
+### Implementation
+
+```python backend/classroom_availability.py
+def get_available_times(data, today_date, space_id):
+    available_times = []
+    
+    # Find today's subject
+    today_subject = None
+    for subject in data['subjects']:
+        if subject['item_date'].split('T')[0] == today_date.isoformat():
+            today_subject = subject
+            break
+    
+    if not today_subject:
+        return available_times
+    
+    # Create reservation list
+    reservations = []
+    for item in today_subject['items']:
+        try:
+            start_hours = float(item['start'])
+            end_hours = float(item['end'])
+            
+            start = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=start_hours)
+            end = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=end_hours)
+            
+            reservations.append({'start': start, 'end': end})
+        except Exception as e:
+            print(f'Error processing reservation: {str(e)}')
+    
+    reservations.sort(key=lambda x: x['start'])
+    
+    # Get building hours
+    building_code = CLASSROOMS[str(space_id)]["building_code"]
+    business_start_hour = BUILDINGS[building_code]["business_start_hour"]
+    business_end_hour = BUILDINGS[building_code]["business_end_hour"]
+    
+    business_start = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=business_start_hour)
+    business_end = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=business_end_hour)
+    
+    current_time = business_start
+    
+    # Find available slots
+    for reservation in reservations:
+        if current_time < reservation['start'] and current_time < business_end:
+            availability_end = business_end if reservation['start'] == business_end else min(
+                reservation['start'] - timedelta(minutes=1),
+                business_end
+            )
+            
+            gap_minutes = (availability_end - current_time).total_seconds() / 60
+            
+            if gap_minutes > MIN_GAP_MINUTES and reservation['start'] > business_start:
+                available_times.append({
+                    'start': current_time,
+                    'end': availability_end
+                })
+        current_time = max(current_time, reservation['end'] + timedelta(minutes=1))
+    
+    # Check final slot (after last reservation until business close)
+    if current_time < business_end:
+        final_gap_minutes = (business_end - current_time).total_seconds() / 60
+        if final_gap_minutes > MIN_GAP_MINUTES:
+            available_times.append({
+                'start': current_time,
+                'end': business_end
+            })
+    
+    return available_times
+```
+
+### Example Calculation
+
+<Tabs>
+  <Tab title="Input Data">
+    **Classroom:** CAS 116
+    
+    **Business Hours:** 7:00 AM - 11:00 PM (23:00)
+    
+    **Reservations:**
+    - 10:00 AM - 11:15 AM (CS 101 Lecture)
+    - 1:30 PM - 3:00 PM (MA 123 Recitation)
+    - 7:00 PM - 9:00 PM (Study Group)
+    
+    **Current Time:** 12:00 PM (user checking at noon)
+  </Tab>
+  
+  <Tab title="Algorithm Steps">
+    1. **Sort reservations:** Already sorted by start time
+    2. **Gap 1:** 7:00 AM → 10:00 AM (3 hours = 180 minutes) ✅
+    3. **Gap 2:** 11:15 AM → 1:30 PM (2h 15m = 135 minutes) ✅
+    4. **Gap 3:** 3:00 PM → 7:00 PM (4 hours = 240 minutes) ✅
+    5. **Gap 4:** 9:00 PM → 11:00 PM (2 hours = 120 minutes) ✅
+    6. All gaps exceed `MIN_GAP_MINUTES` (28 minutes)
+  </Tab>
+  
+  <Tab title="Output">
+    ```json
+    [
+      {"start": "07:00:00", "end": "09:59:00"},
+      {"start": "11:16:00", "end": "13:29:00"},
+      {"start": "15:01:00", "end": "18:59:00"},
+      {"start": "21:01:00", "end": "23:00:00"}
+    ]
+    ```
+    
+    <Note>
+    The 1-minute buffer (e.g., ending at 09:59 instead of 10:00) prevents showing slots that overlap with reservation setup time.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Configuration Data
+
+### Classroom Definitions
+
+All 77 tracked classrooms are defined in `config.py`:
+
+```python backend/config.py
+CLASSROOMS = {
+    "342": {"id": "342", "name": "116", "building_code": "CAS"},
+    "344": {"id": "344", "name": "201", "building_code": "CAS"},
+    "345": {"id": "345", "name": "203", "building_code": "CAS"},
+    # ... 74 more classrooms
+}
+```
+
+**Key:** 25Live space_id (used in API requests)
+
+**Value:**
+- `id` - Same as key (for consistency)
+- `name` - Room number as displayed to users
+- `building_code` - Reference to BUILDINGS config
+
+### Building Definitions
+
+Building metadata and business hours:
+
+```python backend/config.py
+BUILDINGS = {
+    "CAS": {
+        "code": "CAS",
+        "name": "College of Arts & Sciences",
+        "business_start_hour": 7,     # 7:00 AM
+        "business_end_hour": 23       # 11:00 PM
+    },
+    "CGS": {
+        "code": "CGS",
+        "name": "College of General Studies",
+        "business_start_hour": 7,     # 7:00 AM
+        "business_end_hour": 21.5     # 9:30 PM
+    }
+}
+```
+
+<Warning>
+Business hours are hardcoded. If BU changes building hours (e.g., during breaks), you must update `config.py` and redeploy.
+</Warning>
+
+## Time Gap Configuration
+
+The minimum time slot duration is configurable:
+
+```python backend/config.py
+MIN_GAP_MINUTES = 28  # requires 30 minutes actual gap (28 + 2 minute buffer)
+```
+
+<Accordion title="Why 28 minutes instead of 30?">
+  The algorithm adds a 1-minute buffer before and after each reservation:
+  
+  - Reservation: 10:00 AM - 11:00 AM
+  - Available slot: 11:**01** AM - ...
+  
+  So a 28-minute configured gap becomes a ~30-minute actual gap when accounting for buffers. This prevents edge cases where a user arrives right as a class is starting.
+</Accordion>
+
+## Timezone Handling
+
+All times use **America/New_York** timezone to match BU's location:
+
+```python backend/classroom_availability.py
+import pytz
+
+est = pytz.timezone('America/New_York')
+today_date = datetime.now(est).date()
+```
+
+<Note>
+Even if the backend is deployed in a different timezone (e.g., UTC), all scheduling logic uses Eastern Time to match BU's academic calendar.
+</Note>
+
+## Error Handling
+
+The data fetching implementation gracefully handles failures:
+
+<CodeGroup>
+```python API Request Failure
+async def fetch_classroom_data(session, space_id, date):
+    try:
+        async with session.get(url, params=params) as response:
+            if response.status == 200:
+                return await response.json()
+            print(f'Failed to fetch data for space {space_id}: {response.status}')
+            return None  # Returns None instead of crashing
+    except Exception as e:
+        print(f'Error fetching data for space {space_id}: {str(e)}')
+        return None
+```
+
+```python Processing Failure
+for space_id, data in zip(CLASSROOMS.keys(), results):
+    if not data:
+        availability_data[str(space_id)] = []  # Empty availability on error
+        continue
+        
+    try:
+        available_times = get_available_times(data, today_date, space_id)
+        availability_data[str(space_id)] = [...]
+    except Exception as e:
+        print(f'Error processing space {space_id}: {str(e)}')
+        availability_data[str(space_id)] = []  # Fail gracefully
+```
+</CodeGroup>
+
+**Failure behavior:**
+- Individual classroom failures don't crash the entire fetch
+- Failed classrooms return empty availability (`[]`)
+- Users see "No available times" for those classrooms
+- Other classrooms continue to work normally
+
+## Rate Limiting & Caching
+
+To avoid overwhelming the BU API:
+
+<Steps>
+  <Step title="24-hour cache">
+    Data is cached in Redis for 24 hours to minimize API calls
+  </Step>
+  
+  <Step title="30-minute refresh cooldown">
+    Users can only manually refresh once every 30 minutes
+  </Step>
+  
+  <Step title="Wake-up refresh">
+    On app startup, only refresh if data wasn't fetched today
+  </Step>
+</Steps>
+
+See [Caching Strategy](/technical/caching) for implementation details.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="System Architecture" icon="sitemap" href="/technical/architecture">
+    Understand the full stack architecture
+  </Card>
+  
+  <Card title="Caching Strategy" icon="database" href="/technical/caching">
+    Learn about Redis caching and wake-up logic
+  </Card>
+</CardGroup>

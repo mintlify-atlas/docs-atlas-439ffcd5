@@ -1,0 +1,174 @@
+---
+title: 'GET /api/open-classrooms'
+description: 'Retrieve current classroom availability organized by building'
+---
+
+## Endpoint
+
+```
+GET /api/open-classrooms
+```
+
+Returns all classroom availability data organized by building. This endpoint provides information about which classrooms are currently available and their schedule for the day.
+
+## Request
+
+This endpoint does not require any parameters.
+
+```bash cURL
+curl https://emptyclassroom-production.up.railway.app/api/open-classrooms
+```
+
+## Response
+
+<ResponseField name="buildings" type="object" required>
+  Dictionary of buildings keyed by building code
+  
+  <Expandable title="Building Object">
+    <ResponseField name="code" type="string" required>
+      Building code identifier (e.g., "CAS", "CGS")
+    </ResponseField>
+    
+    <ResponseField name="name" type="string" required>
+      Full building name (e.g., "College of Arts & Sciences")
+    </ResponseField>
+    
+    <ResponseField name="classrooms" type="array" required>
+      List of classrooms in this building
+      
+      <Expandable title="Classroom Object">
+        <ResponseField name="id" type="string" required>
+          Unique classroom identifier
+        </ResponseField>
+        
+        <ResponseField name="name" type="string" required>
+          Classroom room number (e.g., "116", "B06A")
+        </ResponseField>
+        
+        <ResponseField name="availability" type="array" required>
+          Array of available time slots for this classroom
+          
+          <Expandable title="Time Slot Object">
+            <ResponseField name="start" type="string" required>
+              Start time in HH:MM format (24-hour)
+            </ResponseField>
+            
+            <ResponseField name="end" type="string" required>
+              End time in HH:MM format (24-hour)
+            </ResponseField>
+            
+            <ResponseField name="duration_minutes" type="number" required>
+              Duration of the available slot in minutes
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="last_updated" type="string | null" required>
+  ISO 8601 timestamp of when the data was last refreshed, or null if never updated
+</ResponseField>
+
+## Response Example
+
+```json
+{
+  "buildings": {
+    "CAS": {
+      "code": "CAS",
+      "name": "College of Arts & Sciences",
+      "classrooms": [
+        {
+          "id": "342",
+          "name": "116",
+          "availability": [
+            {
+              "start": "09:00",
+              "end": "10:30",
+              "duration_minutes": 90
+            },
+            {
+              "start": "14:00",
+              "end": "16:30",
+              "duration_minutes": 150
+            }
+          ]
+        },
+        {
+          "id": "344",
+          "name": "201",
+          "availability": [
+            {
+              "start": "11:00",
+              "end": "12:00",
+              "duration_minutes": 60
+            }
+          ]
+        }
+      ]
+    },
+    "CGS": {
+      "code": "CGS",
+      "name": "College of General Studies",
+      "classrooms": [
+        {
+          "id": "719",
+          "name": "129",
+          "availability": []
+        }
+      ]
+    }
+  },
+  "last_updated": "2026-03-03T14:30:00-05:00"
+}
+```
+
+## Behavior
+
+### Caching
+
+This endpoint implements intelligent caching:
+
+1. **Cache Hit**: If data is available in Redis cache, it returns immediately
+2. **Cache Miss**: If no cached data exists, it fetches fresh data from the upstream source, caches it for 24 hours, and updates the `last_updated` timestamp
+
+### Data Organization
+
+The response includes all configured buildings, even if they have no classrooms or all classrooms are busy. Buildings currently supported:
+
+- **CAS** - College of Arts & Sciences (7 AM - 11 PM business hours)
+- **CGS** - College of General Studies (7 AM - 9:30 PM business hours)
+
+### Availability Calculation
+
+Time slots in the `availability` array represent gaps of **at least 30 minutes** between scheduled classes. Shorter gaps are not included to ensure meaningful study time.
+
+## Error Responses
+
+<ResponseField name="500 Internal Server Error">
+  Returns an empty object `{}` if there's an error fetching or processing classroom data. The error is logged server-side.
+</ResponseField>
+
+```json Error Response
+{}
+```
+
+<Note>
+Unlike other endpoints, this endpoint returns an empty object instead of a standard error response to ensure the frontend can always render safely.
+</Note>
+
+## Use Cases
+
+- Display current classroom availability in a web or mobile app
+- Find study spaces on campus
+- Analyze classroom utilization patterns
+- Build scheduling or wayfinding tools
+
+## Notes
+
+- Empty `availability` arrays indicate the classroom is fully booked for the day
+- The `last_updated` field is shared across all classrooms (data is refreshed as a batch)
+- Classroom IDs are unique identifiers used by BU's scheduling system
+- Times are in Eastern Time (America/New_York timezone)

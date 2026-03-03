@@ -1,0 +1,628 @@
+---
+title: 'Caching Strategy'
+description: 'Redis caching implementation with 24-hour expiry and intelligent wake-up refresh logic'
+---
+
+## Overview
+
+EmptyClassroom uses **Redis** to cache classroom availability data with a **24-hour TTL** (time-to-live). This reduces load on the BU scheduling API and provides fast response times for users.
+
+<Note>
+The caching strategy balances freshness (data updates daily) with performance (sub-100ms response times) and API politeness (minimal requests to BU systems).
+</Note>
+
+## Redis Configuration
+
+### Connection Setup
+
+Redis is configured in `backend/cache.py`:
+
+```python backend/cache.py
+import redis
+from config import REDIS_URL, REDIS_TIMEOUT, CACHE_KEY, CACHE_EXPIRY
+
+rd = redis.from_url(
+    REDIS_URL,
+    decode_responses=True,  # Automatically decode bytes to strings
+    socket_timeout=REDIS_TIMEOUT  # 5 second timeout
+)
+```
+
+**Configuration values:**
+
+```python backend/config.py
+REDIS_URL = os.getenv('REDIS_URL')  # Provided by Railway Redis plugin
+REDIS_TIMEOUT = 5  # seconds
+CACHE_KEY = 'classrooms:availability'
+CACHE_EXPIRY = 24 * 60 * 60  # 24 hours in seconds
+```
+
+<Accordion title="Why decode_responses=True?">
+  By default, Redis returns byte strings (`b'value'`). Setting `decode_responses=True` automatically converts these to Python strings, eliminating the need for manual `.decode('utf-8')` calls throughout the codebase.
+</Accordion>
+
+### Railway Redis Plugin
+
+The backend is deployed on Railway with the official Redis plugin:
+
+<Steps>
+  <Step title="Add Redis Plugin">
+    In Railway dashboard: **New** → **Database** → **Add Redis**
+  </Step>
+  
+  <Step title="Automatic Environment Variable">
+    Railway automatically injects `REDIS_URL` into the backend service:
+    ```
+    redis://default:password@hostname:6379
+    ```
+  </Step>
+  
+  <Step title="Connection Ready">
+    The backend reads `REDIS_URL` from environment variables and connects automatically
+  </Step>
+</Steps>
+
+## Cache Keys
+
+EmptyClassroom uses two Redis keys:
+
+<CardGroup cols={2}>
+  <Card title="classrooms:availability" icon="database">
+    **Type:** String (JSON)
+    
+    **TTL:** 24 hours
+    
+    **Content:** Complete availability data for all 77 classrooms
+    
+    **Size:** ~5-15 KB (varies by schedule density)
+  </Card>
+  
+  <Card title="classrooms:last_refresh" icon="clock">
+    **Type:** String (ISO timestamp)
+    
+    **TTL:** 24 hours
+    
+    **Content:** ISO 8601 timestamp of last data fetch
+    
+    **Example:** `"2024-03-03T14:32:15.123456-05:00"`
+  </Card>
+</CardGroup>
+
+## Cache Operations
+
+### Reading from Cache
+
+The `/api/open-classrooms` endpoint checks cache first:
+
+```python backend/main.py
+@app.get('/api/open-classrooms')
+async def get_classroom_availability_by_building():
+    try:
+        # Check cache first
+        cache = rd.get('classrooms:availability')
+        
+        if cache:
+            print('Cache hit')
+            availability_data = json.loads(cache)
+        else:
+            print('Cache miss - fetching new data')
+            availability_data = await get_classroom_availability()
+            rd.set('classrooms:availability', json.dumps(availability_data), ex=CACHE_EXPIRY)
+            
+            # Update last refresh timestamp when fetching new data
+            now = datetime.now(pytz.timezone('America/New_York'))
+            rd.set('classrooms:last_refresh', now.isoformat(), ex=CACHE_EXPIRY)
+
+        # ... organize and return data
+```
+
+<Tabs>
+  <Tab title="Cache Hit (Fast)">
+    1. User requests `/api/open-classrooms`
+    2. Backend calls `rd.get('classrooms:availability')`
+    3. Redis returns cached JSON string
+    4. Backend parses JSON and returns data
+    5. **Response time: ~50-100ms**
+  </Tab>
+  
+  <Tab title="Cache Miss (Slow)">
+    1. User requests `/api/open-classrooms`
+    2. Backend calls `rd.get('classrooms:availability')`
+    3. Redis returns `None` (key doesn't exist or expired)
+    4. Backend fetches from BU API (~77 concurrent requests)
+    5. Backend stores result in Redis with 24h TTL
+    6. Backend returns data
+    7. **Response time: ~500-1500ms** (first request of the day)
+  </Tab>
+</Tabs>
+
+### Writing to Cache
+
+The `update_cache()` function handles cache writes:
+
+```python backend/cache.py
+import json
+import redis
+from datetime import datetime
+from config import REDIS_URL, REDIS_TIMEOUT, CACHE_KEY, CACHE_EXPIRY
+from classroom_availability import get_classroom_availability
+
+rd = redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+    socket_timeout=REDIS_TIMEOUT
+)
+
+async def update_cache():
+    print(f'Starting cache update at {datetime.now()}')
+    
+    try:
+        # Fetch fresh data from BU API
+        availability_data = await get_classroom_availability()
+        
+        # Store in Redis with 24-hour expiry
+        rd.set(CACHE_KEY, json.dumps(availability_data), ex=CACHE_EXPIRY)
+        
+        print('Cache update completed successfully')
+    except redis.RedisError as e:
+        print(f'Redis operation failed: {str(e)}')
+    except Exception as e:
+        print(f'Cache update failed: {str(e)}')
+```
+
+<Note>
+The `ex=CACHE_EXPIRY` parameter sets the TTL to 24 hours (86400 seconds). Redis automatically deletes the key after this duration.
+</Note>
+
+## Cache Expiry Strategy
+
+### 24-Hour TTL
+
+Why 24 hours?
+
+<AccordionGroup>
+  <Accordion title="Aligns with academic schedule">
+    Course schedules are consistent day-to-day. Today's 10 AM class is likely at 10 AM tomorrow, so yesterday's data is mostly accurate.
+  </Accordion>
+  
+  <Accordion title="Minimizes API load">
+    With 24h cache, the BU API is queried at most **once per day** (often less due to wake-up logic).
+  </Accordion>
+  
+  <Accordion title="Handles overnight downtime">
+    If the app goes idle overnight (no traffic), the cache naturally expires and refreshes on the first morning request.
+  </Accordion>
+  
+  <Accordion title="Allows manual refresh">
+    Users can manually refresh if they notice stale data (e.g., class cancellation).
+  </Accordion>
+</AccordionGroup>
+
+### Automatic Expiry
+
+Redis handles expiry automatically:
+
+```python
+rd.set('classrooms:availability', json_data, ex=86400)  # Expires in 24 hours
+rd.set('classrooms:last_refresh', timestamp, ex=86400)  # Same TTL
+```
+
+**Timeline:**
+- **t=0:** Data cached at 8:00 AM on Monday
+- **t=12h:** Still valid at 8:00 PM on Monday
+- **t=24h:** Expires at 8:00 AM on Tuesday
+- **t=24h+1s:** Next request triggers cache miss and refresh
+
+## Wake-Up Refresh Logic
+
+### The Problem
+
+On platforms like Railway, apps may:
+- Sleep after inactivity (free tier)
+- Restart after deployments
+- Scale down to zero instances
+
+When the app wakes up, the cache might be:
+1. **Expired** (it's been 24+ hours)
+2. **Stale** (it's a new day, but cache has yesterday's data)
+3. **Empty** (Redis was restarted)
+
+### The Solution
+
+**Wake-up refresh logic** automatically refreshes data on startup if needed:
+
+```python backend/main.py
+def should_refresh_on_wake():
+    try:
+        last_refresh_key = 'classrooms:last_refresh'
+        last_refresh_str = rd.get(last_refresh_key)
+        
+        if not last_refresh_str:
+            return True  # No previous refresh, should refresh
+        
+        last_refresh = datetime.fromisoformat(last_refresh_str)
+        now = datetime.now(pytz.timezone('America/New_York'))
+        
+        # Refresh if data not fetched today
+        return last_refresh.date() < now.date()
+        
+    except Exception as e:
+        print(f'Error checking if should refresh on wake: {str(e)}')
+        return True  # Default to refreshing on error
+
+@app.on_event('startup')
+async def startup_event():
+    # Wait for Redis to be ready
+    for i in range(5):
+        try:
+            rd.ping()
+            print('Redis connection established')
+            break
+        except Exception:
+            print(f'Waiting for Redis to be ready... (attempt {i+1}/5)')
+            await asyncio.sleep(1)
+
+    try:
+        print('App starting up - checking if refresh is needed')
+        
+        # Check if refresh needed
+        if should_refresh_on_wake():
+            print('App was sleeping or no recent data - fetching fresh data')
+            await update_cache()
+            
+            # Set refresh timestamp
+            now = datetime.now(pytz.timezone('America/New_York'))
+            rd.set('classrooms:last_refresh', now.isoformat(), ex=CACHE_EXPIRY)
+            print('Wake-up refresh completed successfully')
+        else:
+            print('Recent data available, skipping wake-up refresh')
+            
+    except Exception as e:
+        print(f'Failed to handle wake-up refresh: {str(e)}')
+```
+
+### Decision Logic
+
+<Steps>
+  <Step title="Check last refresh timestamp">
+    Read `classrooms:last_refresh` from Redis
+  </Step>
+  
+  <Step title="Compare dates">
+    If `last_refresh.date() < today.date()`, data is from yesterday or earlier → **REFRESH**
+    
+    If `last_refresh.date() == today.date()`, data is from today → **SKIP**
+  </Step>
+  
+  <Step title="Handle missing timestamp">
+    If key doesn't exist (Redis was cleared) → **REFRESH**
+  </Step>
+  
+  <Step title="Handle errors">
+    If any error occurs (Redis down, parse error) → **REFRESH** (safe default)
+  </Step>
+</Steps>
+
+### Example Scenarios
+
+<Tabs>
+  <Tab title="Scenario 1: Normal Wake-Up">
+    **Situation:**
+    - Last refresh: Monday 8:00 AM
+    - App sleeps Monday 11 PM - Tuesday 7 AM
+    - App wakes: Tuesday 7:30 AM
+    
+    **Logic:**
+    ```python
+    last_refresh.date() = Monday (2024-03-03)
+    now.date() = Tuesday (2024-03-04)
+    Monday < Tuesday → True
+    ```
+    
+    **Result:** ✅ Refresh on startup (fetches Tuesday's schedule)
+  </Tab>
+  
+  <Tab title="Scenario 2: Same-Day Restart">
+    **Situation:**
+    - Last refresh: Monday 8:00 AM
+    - App restarts: Monday 3:00 PM (deployment)
+    
+    **Logic:**
+    ```python
+    last_refresh.date() = Monday (2024-03-03)
+    now.date() = Monday (2024-03-03)
+    Monday < Monday → False
+    ```
+    
+    **Result:** ⏭️ Skip refresh (today's data still valid)
+  </Tab>
+  
+  <Tab title="Scenario 3: Redis Cleared">
+    **Situation:**
+    - Redis was restarted/cleared
+    - `classrooms:last_refresh` doesn't exist
+    
+    **Logic:**
+    ```python
+    last_refresh_str = None
+    return True  # No previous refresh
+    ```
+    
+    **Result:** ✅ Refresh on startup (rebuild cache)
+  </Tab>
+</Tabs>
+
+<Note>
+Wake-up refresh happens **asynchronously** during startup. The app is ready to serve requests even if the refresh is still in progress (though those requests will be slow until cache is populated).
+</Note>
+
+## Manual Refresh with Cooldown
+
+Users can manually refresh data via the `/api/refresh` endpoint, but with a **30-minute cooldown** to prevent abuse.
+
+### Cooldown Implementation
+
+```python backend/main.py
+@app.post('/api/refresh')
+async def refresh_data():
+    try:
+        # Check if in cooldown period
+        last_refresh_key = 'classrooms:last_refresh'
+        last_refresh_str = rd.get(last_refresh_key)
+        
+        if last_refresh_str:
+            last_refresh = datetime.fromisoformat(last_refresh_str)
+            now = datetime.now(pytz.timezone('America/New_York'))
+            time_since_refresh = now - last_refresh
+            
+            # Enforce 30-minute cooldown
+            if time_since_refresh < timedelta(minutes=REFRESH_COOLDOWN_MINUTES):
+                remaining_minutes = REFRESH_COOLDOWN_MINUTES - (time_since_refresh.total_seconds() / 60)
+                raise HTTPException(
+                    status_code=429, 
+                    detail=f"Refresh cooldown active. Please wait {remaining_minutes:.1f} more minutes."
+                )
+        
+        # Update cache
+        await update_cache()
+        
+        # Update last refresh timestamp
+        now = datetime.now(pytz.timezone('America/New_York'))
+        rd.set(last_refresh_key, now.isoformat(), ex=CACHE_EXPIRY)
+        
+        return {"message": "Data refreshed successfully", "timestamp": now.isoformat()}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f'Error refreshing data: {str(e)}')
+        raise HTTPException(status_code=500, detail="Failed to refresh data")
+```
+
+### Cooldown Status Endpoint
+
+The frontend checks cooldown status to show/hide the refresh button:
+
+```python backend/main.py
+@app.get('/api/cooldown-status')
+async def get_cooldown_status():
+    try:
+        last_refresh_key = 'classrooms:last_refresh'
+        last_refresh_str = rd.get(last_refresh_key)
+        
+        if last_refresh_str:
+            last_refresh = datetime.fromisoformat(last_refresh_str)
+            now = datetime.now(pytz.timezone('America/New_York'))
+            time_since_refresh = now - last_refresh
+            
+            if time_since_refresh < timedelta(minutes=REFRESH_COOLDOWN_MINUTES):
+                remaining_minutes = REFRESH_COOLDOWN_MINUTES - (time_since_refresh.total_seconds() / 60)
+                return {"in_cooldown": True, "remaining_minutes": remaining_minutes}
+            else:
+                return {"in_cooldown": False, "remaining_minutes": 0}
+        else:
+            return {"in_cooldown": False, "remaining_minutes": 0}
+            
+    except Exception as e:
+        print(f'Error getting cooldown status: {str(e)}')
+        return {"in_cooldown": False, "remaining_minutes": 0}
+```
+
+**Configuration:**
+
+```python backend/config.py
+REFRESH_COOLDOWN_MINUTES = 30
+```
+
+### Frontend Cooldown UI
+
+The Next.js frontend displays a countdown timer during cooldown:
+
+```typescript app/page.tsx
+const [cooldownRemaining, setCooldownRemaining] = useState<number | null>(null);
+const [cooldownExpiresAt, setCooldownExpiresAt] = useState<number | null>(null);
+
+// Fetch cooldown status on mount
+const fetchCooldownStatus = useCallback(async () => {
+  setIsCooldownLoading(true);
+  try {
+    const response = await fetch('/api/cooldown-status');
+    if (response.ok) {
+      const data = await response.json();
+      if (data.in_cooldown) {
+        const expiresAt = Date.now() + data.remaining_minutes * 60 * 1000;
+        setCooldownExpiresAt(expiresAt);
+        setCooldownRemaining(data.remaining_minutes);
+      } else {
+        setCooldownRemaining(null);
+        setCooldownExpiresAt(null);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to fetch cooldown status:', error);
+  }
+  finally {
+    setIsCooldownLoading(false);
+  }
+}, []);
+
+// Update countdown every second
+useEffect(() => {
+  if (!cooldownExpiresAt) return;
+
+  const interval = setInterval(() => {
+    const remainingMs = Math.max(0, cooldownExpiresAt - Date.now());
+    const remainingMinutes = remainingMs / (1000 * 60);
+
+    if (remainingMinutes <= 0) {
+      setCooldownRemaining(null);
+      setCooldownExpiresAt(null);
+    } else {
+      setCooldownRemaining(remainingMinutes);
+    }
+  }, 1000);
+
+  return () => clearInterval(interval);
+}, [cooldownExpiresAt]);
+```
+
+<Note>
+The frontend calculates `cooldownExpiresAt` once and uses `setInterval` to update the display. This prevents drift from repeated API calls.
+</Note>
+
+## Redis Connection Reliability
+
+### Startup Health Check
+
+The app waits for Redis to be ready before processing requests:
+
+```python backend/main.py
+@app.on_event('startup')
+async def startup_event():
+    # Wait for Redis to be ready
+    for i in range(5):
+        try:
+            rd.ping()
+            print('Redis connection established')
+            break
+        except Exception:
+            print(f'Waiting for Redis to be ready... (attempt {i+1}/5)')
+            await asyncio.sleep(1)
+```
+
+**Retry logic:**
+- Attempts: 5 retries
+- Delay: 1 second between attempts
+- Total timeout: ~5 seconds
+- On failure: App continues (requests will fail until Redis is available)
+
+### Connection Timeout
+
+```python backend/cache.py
+rd = redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+    socket_timeout=REDIS_TIMEOUT  # 5 seconds
+)
+```
+
+If Redis doesn't respond within 5 seconds, the operation raises a timeout exception.
+
+## Cache Performance
+
+<CardGroup cols={2}>
+  <Card title="Cache Hit" icon="bolt">
+    **Response Time:** 50-100ms
+    
+    **Breakdown:**
+    - Redis query: ~1-5ms
+    - JSON parsing: ~5-10ms
+    - Data organization: ~10-20ms
+    - Network overhead: ~30-60ms
+  </Card>
+  
+  <Card title="Cache Miss" icon="hourglass">
+    **Response Time:** 500-1500ms
+    
+    **Breakdown:**
+    - BU API requests: ~300-800ms
+    - Data processing: ~50-100ms
+    - Redis write: ~5-10ms
+    - Network overhead: ~30-60ms
+  </Card>
+</CardGroup>
+
+## Monitoring Cache State
+
+Connect to Railway Redis via CLI to inspect cache:
+
+```bash
+# Get cache value
+redis-cli -u $REDIS_URL GET classrooms:availability
+
+# Get last refresh timestamp
+redis-cli -u $REDIS_URL GET classrooms:last_refresh
+
+# Check TTL (time remaining)
+redis-cli -u $REDIS_URL TTL classrooms:availability
+# Returns: 43200 (12 hours remaining in seconds)
+
+# Clear cache (force refresh on next request)
+redis-cli -u $REDIS_URL DEL classrooms:availability classrooms:last_refresh
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Always set expiry">
+    Never use `rd.set()` without `ex=` parameter - prevents memory leaks from keys that never expire
+  </Step>
+  
+  <Step title="Use consistent key naming">
+    Prefix keys with namespace (`classrooms:`) to organize related data
+  </Step>
+  
+  <Step title="Store timestamps with timezone">
+    Use ISO 8601 format with timezone info to avoid ambiguity
+  </Step>
+  
+  <Step title="Handle missing keys gracefully">
+    Always check if `rd.get()` returns `None` before using the value
+  </Step>
+  
+  <Step title="Log cache operations">
+    Print cache hits/misses for monitoring and debugging
+  </Step>
+</Steps>
+
+## Future Optimizations
+
+<CardGroup cols={2}>
+  <Card title="Per-Building Caching" icon="building">
+    Cache each building separately instead of all 77 classrooms together. Reduces cache size and allows partial refreshes.
+  </Card>
+  
+  <Card title="Cache Warming" icon="fire">
+    Schedule a cron job to refresh cache at 6 AM daily before peak usage.
+  </Card>
+  
+  <Card title="Stale-While-Revalidate" icon="sync">
+    Serve stale cache while fetching fresh data in the background.
+  </Card>
+  
+  <Card title="Cache Versioning" icon="code-branch">
+    Add version numbers to cache keys to support zero-downtime cache schema changes.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="System Architecture" icon="sitemap" href="/technical/architecture">
+    Learn about the full stack architecture
+  </Card>
+  
+  <Card title="Data Sources" icon="plug" href="/technical/data-sources">
+    Understand the BU 25Live API integration
+  </Card>
+</CardGroup>

@@ -1,0 +1,356 @@
+---
+title: 'Buildings & Classrooms'
+description: 'Explore 70+ classrooms across CAS and CGS buildings at Boston University'
+icon: 'building'
+---
+
+## Overview
+
+EmptyClassroom currently tracks availability for over 70 classrooms across two major Boston University buildings. Each building has its own operating hours and collection of classrooms available for study.
+
+## Supported Buildings
+
+EmptyClassroom monitors classrooms in the following buildings:
+
+<CardGroup cols={2}>
+  <Card title="CAS" icon="building-columns">
+    **College of Arts & Sciences**
+    
+    - 37 classrooms
+    - Open 7 AM - 11 PM
+    - Includes basement and upper-floor rooms
+  </Card>
+  
+  <Card title="CGS" icon="building">
+    **College of General Studies**
+    
+    - 22 classrooms  
+    - Open 7 AM - 9:30 PM
+    - Multi-floor classroom building
+  </Card>
+</CardGroup>
+
+## College of Arts & Sciences (CAS)
+
+### Building Information
+
+- **Building code**: CAS
+- **Full name**: College of Arts & Sciences
+- **Operating hours**: 7:00 AM - 11:00 PM
+- **Total classrooms tracked**: 37
+
+### Classroom Distribution
+
+CAS has a diverse mix of classroom types and locations:
+
+#### Basement Level (B-prefix)
+
+- **B06A**, **B06B** - Split basement rooms
+- **B12**, **B18**, **B20** - Basement classrooms
+- **B25A**, **B25B** - Additional split basement rooms
+- **B27** - Basement classroom
+- **B36** - Basement classroom
+
+<Note>
+  Basement classrooms often have the fewest conflicts and can be great for quiet study sessions.
+</Note>
+
+#### First Floor
+
+- **116** - Main level classroom
+- **114A**, **114B** - Split first-floor rooms
+
+#### Second Floor
+
+- **201**, **203**, **208** - Standard 200-level rooms
+- **204A**, **204B** - Split classrooms
+- **211**, **212**, **213**, **214**, **216**, **218**, **220** - Sequential rooms
+- **222**, **223**, **224**, **225**, **226**, **227**, **228**, **229** - Upper 200-level rooms
+- **233**, **235**, **237** - End of second floor
+
+#### Third Floor
+
+- **310**, **312**, **313**, **314**, **315**, **316**, **318**, **320** - 300-level rooms
+- **322**, **323A**, **323B**, **324**, **325**, **326** - Additional 300-level rooms
+
+#### Fourth Floor
+
+- **424**, **426**, **427** - 400-level rooms
+
+#### Fifth Floor
+
+- **522** - Single 500-level room
+
+#### Special Spaces
+
+- **Tsai** - Tsai Performance Center (auditorium-style)
+
+<Info>
+  CAS has the widest variety of room types, from small split classrooms (A/B variants) to larger lecture halls.
+</Info>
+
+## College of General Studies (CGS)
+
+### Building Information
+
+- **Building code**: CGS
+- **Full name**: College of General Studies
+- **Operating hours**: 7:00 AM - 9:30 PM
+- **Total classrooms tracked**: 22
+
+<Warning>
+  CGS closes earlier than CAS (9:30 PM vs 11:00 PM). Plan your study sessions accordingly.
+</Warning>
+
+### Classroom Distribution
+
+CGS classrooms are organized across multiple floors:
+
+#### First Floor
+
+- **111A**, **111B** - Split first-floor rooms
+- **113**, **115** - Standard first-floor rooms
+- **117A**, **117B** - Additional split rooms
+- **121**, **123**, **129** - First-floor classrooms
+
+#### Third Floor
+
+- **311**, **313**, **315** - 300-level rooms
+- **321**, **323** - Additional 300-level rooms
+
+#### Fourth Floor
+
+- **421**, **423** - 400-level rooms
+
+#### Fifth Floor
+
+- **505** - Single 500-level room
+- **511**, **515** - 500-level classrooms
+- **521**, **523**, **525**, **527** - Upper 500-level rooms
+
+<Note>
+  CGS has many split classrooms (A/B variants) on the first floor, which are often smaller and more intimate for individual or small-group study.
+</Note>
+
+## How Classrooms Are Displayed
+
+### Building Accordions
+
+Classrooms are organized into expandable building sections:
+
+<Steps>
+  <Step title="Building header">
+    Shows the full building name, code, and availability count (e.g., "College of Arts & Sciences - CAS" with "5 available").
+  </Step>
+  
+  <Step title="Availability badge">
+    Green badge with count for available rooms, or red "unavailable" badge if none are free.
+  </Step>
+  
+  <Step title="Chevron icon">
+    Arrow that rotates when you expand/collapse the building section.
+  </Step>
+  
+  <Step title="Classroom list">
+    Inside each building, classrooms are listed with their availability time slots.
+  </Step>
+</Steps>
+
+### Classroom Cards
+
+Each classroom displays:
+
+- **Room name**: Building code + room number (e.g., "CAS 225")
+- **Status indicator**: Green dot (available now) or red dot (occupied)
+- **Time slots**: All available time periods for the day
+- **Current slot highlight**: Active time slot shown in green text
+
+### Intelligent Sorting
+
+Classrooms are sorted using a smart algorithm:
+
+1. **Letter-prefixed rooms first** (alphabetically)
+   - B06A, B06B, B12, B18, B20, B25A, B25B, B27, B36, Tsai
+
+2. **Numeric rooms second** (numerically)
+   - 111, 113, 115, 116, 121, 201, 203, etc.
+
+3. **Suffixed rooms** (by base number, then suffix)
+   - 111A before 111B
+   - 204A before 204B
+   - 323A before 323B
+
+This ensures rooms are easy to locate and logically organized by floor and room number.
+
+## Availability Detection
+
+EmptyClassroom determines classroom availability by:
+
+### Time Slot Matching
+
+The system checks if the current time falls within any available time slot:
+
+```typescript
+const isTimeSlotAvailable = (slot: TimeSlot): boolean => {
+  const startTime = createTimeForToday(slot.start);
+  const endTime = createTimeForToday(slot.end);
+  
+  return currentTime >= startTime && currentTime <= endTime;
+};
+```
+
+### Real-Time Updates
+
+The interface updates every minute:
+- Green/red indicators reflect current availability
+- Active time slots are highlighted in green
+- Availability counts update automatically
+- No refresh needed during the current session
+
+<Info>
+  The minute-based update cycle is implemented in `frontend/app/components/BuildingAccordion.tsx:15` using a smart setTimeout that syncs with clock minutes.
+</Info>
+
+### Gap Requirements
+
+A classroom is considered "available" when:
+- There's at least a 30-minute gap in the schedule
+- Configured as `MIN_GAP_MINUTES = 28` (with 2-minute buffer) in `backend/config.py:13`
+- Time slots are calculated from BU's official course schedule
+
+## Data Structure
+
+Classrooms are defined in `backend/config.py:21`:
+
+### Building Configuration
+
+```python
+BUILDINGS = {
+    "CAS": {
+        "code": "CAS",
+        "name": "College of Arts & Sciences",
+        "business_start_hour": 7,
+        "business_end_hour": 23
+    },
+    "CGS": {
+        "code": "CGS",
+        "name": "College of General Studies",
+        "business_start_hour": 7,
+        "business_end_hour": 21.5
+    }
+}
+```
+
+### Classroom Configuration
+
+```python
+CLASSROOMS = {
+    "342": {"id": "342", "name": "116", "building_code": "CAS"},
+    "344": {"id": "344", "name": "201", "building_code": "CAS"},
+    # ... 70+ more classrooms
+}
+```
+
+<Note>
+  The `id` field corresponds to BU's internal room identifier, while `name` is the familiar room number students use.
+</Note>
+
+## Complete Classroom Lists
+
+### All CAS Classrooms
+
+<AccordionGroup>
+  <Accordion title="View all 37 CAS classrooms">
+    - 116, 114A, 114B
+    - 201, 203, 204A, 204B, 208, 211, 212, 213, 214, 216, 218, 220, 222, 223, 224, 225, 226, 227, 228, 229, 233, 235, 237
+    - 310, 312, 313, 314, 315, 316, 318, 320, 322, 323A, 323B, 324, 325, 326
+    - 424, 426, 427
+    - 522
+    - B06A, B06B, B12, B18, B20, B25A, B25B, B27, B36
+    - Tsai
+  </Accordion>
+</AccordionGroup>
+
+### All CGS Classrooms
+
+<AccordionGroup>
+  <Accordion title="View all 22 CGS classrooms">
+    - 111A, 111B, 113, 115, 117A, 117B, 121, 123, 129
+    - 311, 313, 315, 321, 323
+    - 421, 423
+    - 505, 511, 515, 521, 523, 525, 527
+  </Accordion>
+</AccordionGroup>
+
+## Future Building Additions
+
+EmptyClassroom is designed to scale to additional buildings. The architecture supports:
+
+- Adding new buildings to the `BUILDINGS` configuration
+- Mapping classrooms to their respective buildings
+- Custom operating hours per building
+- Automatic integration with the search and filtering system
+
+<Info>
+  Want to request a new building? Use the [Request form](https://form.typeform.com/to/t17kzOqs) linked in the app footer.
+</Info>
+
+## Technical Implementation
+
+### Backend Organization
+
+Classroom data is fetched from BU's scheduling API and organized by building:
+
+```python
+# Organize response by building
+res = {}
+for building_code, building_data in BUILDINGS.items():
+    res[building_code] = {
+        "code": building_data["code"],
+        "name": building_data["name"],
+        "classrooms": []
+    }
+
+# Add classroom data to buildings
+for classroom_id, classroom_data in CLASSROOMS.items():
+    building_code = classroom_data["building_code"]
+    if building_code in res:
+        res[building_code]["classrooms"].append({
+            "id": classroom_data["id"],
+            "name": classroom_data["name"],
+            "availability": availability_data.get(classroom_id, [])
+        })
+```
+
+This code is in `backend/main.py:165`.
+
+### Frontend Rendering
+
+Buildings and classrooms are rendered using:
+
+- **Radix UI Accordion** for expandable building sections
+- **React state management** for tracking open/closed state
+- **Real-time filtering** based on search queries
+- **Dynamic availability badges** that update every minute
+
+Implemented in `frontend/app/components/BuildingAccordion.tsx:1`.
+
+## Tips for Finding Classrooms
+
+<CardGroup cols={2}>
+  <Card title="Explore basement rooms" icon="stairs-down">
+    CAS basement rooms (B-prefix) often have fewer classes scheduled and more availability.
+  </Card>
+  
+  <Card title="Check both buildings" icon="buildings">
+    If one building is full, the other might have plenty of open rooms.
+  </Card>
+  
+  <Card title="Mind the closing times" icon="clock">
+    CGS closes at 9:30 PM, while CAS stays open until 11 PM for late-night studying.
+  </Card>
+  
+  <Card title="Use split rooms" icon="split">
+    A/B rooms (111A/111B, 204A/204B) are often smaller and quieter.
+  </Card>
+</CardGroup>

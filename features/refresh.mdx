@@ -1,0 +1,291 @@
+---
+title: 'Refresh Data'
+description: 'Update classroom availability with the refresh feature and cooldown system'
+icon: 'rotate'
+---
+
+## Overview
+
+EmptyClassroom allows you to manually refresh classroom availability data to get the most up-to-date information from Boston University's scheduling system. The refresh feature includes a 30-minute cooldown period to prevent excessive API calls.
+
+## How to Refresh Data
+
+<Steps>
+  <Step title="Check the last updated time">
+    Look at the top of the page where it displays "Last updated [time]". This shows when the data was last refreshed.
+  </Step>
+  
+  <Step title="Click the refresh button">
+    Click the "↻ Refresh" button next to the last updated timestamp.
+  </Step>
+  
+  <Step title="Wait for the update">
+    The button will show "↻ Refreshing..." and pulse while fetching new data. This typically takes a few seconds.
+  </Step>
+  
+  <Step title="View updated data">
+    Once complete, the "Last updated" time will update, and all classroom availability will reflect the current schedule.
+  </Step>
+</Steps>
+
+## The 30-Minute Cooldown
+
+### What Is It?
+
+The refresh feature has a built-in cooldown period of **30 minutes** between refreshes. This prevents overloading the university's scheduling system while ensuring data stays reasonably current.
+
+<Note>
+  The cooldown is configured in `backend/config.py:14` as `REFRESH_COOLDOWN_MINUTES = 30`.
+</Note>
+
+### How It Works
+
+<Steps>
+  <Step title="First refresh">
+    When you click refresh, the system fetches fresh data from BU's scheduling API and updates the classroom availability.
+  </Step>
+  
+  <Step title="Cooldown starts">
+    The system records the timestamp in Redis with the key `classrooms:last_refresh`.
+  </Step>
+  
+  <Step title="Button disabled">
+    The refresh button becomes disabled and changes to a gray color indicating it's not clickable.
+  </Step>
+  
+  <Step title="Countdown tooltip">
+    Hovering over the disabled button shows a tooltip: "Please wait [X] more minutes"
+  </Step>
+  
+  <Step title="Cooldown expires">
+    After 30 minutes, the button automatically re-enables and you can refresh again.
+  </Step>
+</Steps>
+
+### Visual Indicators
+
+The refresh button has several states to communicate its status:
+
+| State | Appearance | Description |
+|-------|------------|-------------|
+| Ready | Gray text, clickable | Ready to refresh data |
+| Refreshing | "↻ Refreshing..." with pulse animation | Actively fetching new data |
+| Cooldown | Gray text, disabled, not clickable | Waiting for cooldown to expire |
+| Loading | Gray text, disabled | Checking cooldown status on page load |
+
+<Info>
+  When hovering over the disabled refresh button during cooldown, you'll see exactly how many minutes remain before you can refresh again.
+</Info>
+
+## Automatic Refresh on Wake
+
+EmptyClassroom has intelligent wake-up behavior:
+
+### When Does It Happen?
+
+The app automatically refreshes data when:
+- The server starts up and no data was fetched today
+- The app was sleeping and wakes up on a new day
+- There's no cached data available in Redis
+
+### Implementation
+
+The wake-up logic is in `backend/main.py:22`:
+
+```python
+def should_refresh_on_wake():
+    last_refresh_str = rd.get('classrooms:last_refresh')
+    
+    if not last_refresh_str:
+        return True  # No previous refresh
+    
+    last_refresh = datetime.fromisoformat(last_refresh_str)
+    now = datetime.now(pytz.timezone('America/New_York'))
+    
+    # Refresh if data not fetched today
+    return last_refresh.date() < now.date()
+```
+
+<Note>
+  Wake-up refreshes don't count against the 30-minute cooldown. They only happen once per day when the server starts.
+</Note>
+
+## API Endpoints
+
+The refresh system uses three backend endpoints:
+
+### POST /api/refresh
+
+Triggers a manual refresh of classroom data.
+
+**Response on success (200):**
+```json
+{
+  "message": "Data refreshed successfully",
+  "timestamp": "2026-03-03T14:30:00-05:00"
+}
+```
+
+**Response during cooldown (429):**
+```json
+{
+  "error": "Refresh cooldown active. Please wait 15.3 more minutes."
+}
+```
+
+### GET /api/cooldown-status
+
+Checks the current cooldown status.
+
+**Response:**
+```json
+{
+  "in_cooldown": true,
+  "remaining_minutes": 15.3
+}
+```
+
+or
+
+```json
+{
+  "in_cooldown": false,
+  "remaining_minutes": 0
+}
+```
+
+### GET /api/last-updated
+
+Returns the timestamp of the last refresh.
+
+**Response:**
+```json
+{
+  "last_updated": "2026-03-03T14:30:00-05:00"
+}
+```
+
+## Frontend Implementation
+
+The refresh functionality is implemented in two main components:
+
+### RefreshButton Component
+
+Location: `frontend/app/components/RefreshButton.tsx:1`
+
+**Props:**
+- `isRefreshing`: Boolean indicating active refresh
+- `isCooldownLoading`: Boolean for initial cooldown check
+- `cooldownRemaining`: Number of minutes left in cooldown
+- `onRefresh`: Callback function to trigger refresh
+
+**Key features:**
+- Disabled state when `cooldownRemaining > 0`
+- Hover tooltip showing remaining cooldown time
+- Pulse animation during refresh
+- Clean visual feedback for all states
+
+### Page Component State
+
+Location: `frontend/app/page.tsx:65`
+
+The main page component manages:
+- Fetching cooldown status on mount
+- Handling refresh button clicks
+- Parsing cooldown time from error responses
+- Real-time countdown timer
+- Updating UI after successful refresh
+
+## Cooldown Timer Behavior
+
+The frontend includes a real-time countdown timer:
+
+```typescript
+useEffect(() => {
+  if (!cooldownExpiresAt) return;
+
+  const interval = setInterval(() => {
+    const remainingMs = Math.max(0, cooldownExpiresAt - Date.now());
+    const remainingMinutes = remainingMs / (1000 * 60);
+
+    if (remainingMinutes <= 0) {
+      setCooldownRemaining(null);
+      setCooldownExpiresAt(null);
+    } else {
+      setCooldownRemaining(remainingMinutes);
+    }
+  }, 1000);
+
+  return () => clearInterval(interval);
+}, [cooldownExpiresAt]);
+```
+
+This updates the tooltip every second to show accurate remaining time.
+
+<Warning>
+  The cooldown is enforced on the backend. Even if you bypass the frontend button state, the API will reject refresh requests with a 429 status code.
+</Warning>
+
+## Data Caching
+
+Refreshed data is cached in Redis:
+
+- **Cache key**: `classrooms:availability`
+- **Expiration**: 24 hours (86,400 seconds)
+- **Storage format**: JSON string
+- **Timestamp key**: `classrooms:last_refresh`
+
+### Cache Strategy
+
+1. Manual refresh updates the cache immediately
+2. Cache persists for 24 hours even if not refreshed
+3. On cache miss, fresh data is fetched automatically
+4. Last refresh timestamp tracks cooldown separately from cache expiry
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Refresh button is disabled">
+    This is normal behavior during the cooldown period. Hover over the button to see how many minutes remain. The button will automatically re-enable after 30 minutes.
+  </Accordion>
+  
+  <Accordion title="Refresh seems stuck on 'Refreshing...'">
+    This could indicate a network issue or API timeout. Refresh the page to reset the state. The backend likely completed the refresh even if the frontend didn't receive confirmation.
+  </Accordion>
+  
+  <Accordion title="Last updated time doesn't match my refresh">
+    If you see an older timestamp, the refresh may have failed due to the cooldown. Check the browser console for error messages, or wait for the cooldown to expire.
+  </Accordion>
+  
+  <Accordion title="Getting '429 Too Many Requests' error">
+    You've triggered the cooldown protection. This is expected behavior when refreshing too frequently. Wait the indicated number of minutes before trying again.
+  </Accordion>
+</AccordionGroup>
+
+## Technical Details
+
+### Timezone Handling
+
+All timestamps use Eastern Time (America/New_York):
+- Ensures consistency with BU's academic schedule
+- Cooldown calculations account for timezone
+- Frontend displays local time but backend uses ET
+
+### Redis Integration
+
+The cooldown system relies on Redis for persistence:
+- Survives server restarts
+- Shared across multiple server instances
+- Automatic expiration prevents stale cooldowns
+
+### Error Handling
+
+The system gracefully handles various failure scenarios:
+- Redis connection failures default to allowing refresh
+- API errors don't break the cooldown timer
+- Missing cache triggers automatic refresh
+- Malformed timestamps default to allowing refresh
+
+<Info>
+  For developers: The `REFRESH_COOLDOWN_MINUTES` constant can be adjusted in `config.py`, but the default 30 minutes balances freshness with responsible API usage.
+</Info>

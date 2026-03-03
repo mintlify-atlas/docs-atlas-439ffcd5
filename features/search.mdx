@@ -1,0 +1,174 @@
+---
+title: 'Search'
+description: 'Find classrooms instantly with intelligent search functionality'
+icon: 'magnifying-glass'
+---
+
+## Overview
+
+EmptyClassroom's search feature allows you to quickly find specific classrooms across all buildings. The search is smart and flexible, supporting multiple search patterns to help you find exactly what you're looking for.
+
+## How Search Works
+
+<Steps>
+  <Step title="Access the search bar">
+    The search bar is prominently displayed at the top of the classroom list, with a magnifying glass icon on the left side.
+  </Step>
+  
+  <Step title="Type your query">
+    Enter any part of a building code, building name, or classroom number. Results update in real-time as you type.
+  </Step>
+  
+  <Step title="View filtered results">
+    All buildings automatically expand to show matching classrooms. Non-matching classrooms are hidden.
+  </Step>
+  
+  <Step title="Clear the search">
+    Click the X button that appears on the right side of the search bar to clear your query and return to the default view.
+  </Step>
+</Steps>
+
+## Search Patterns
+
+The search functionality supports multiple ways to find classrooms:
+
+### Building Code Search
+Search by building abbreviation:
+- `CAS` - Shows all College of Arts & Sciences classrooms
+- `CGS` - Shows all College of General Studies classrooms
+
+### Building Name Search
+Search by full building name:
+- `College of Arts` - Matches CAS building
+- `General Studies` - Matches CGS building
+
+### Classroom Number Search
+Search by room number:
+- `225` - Finds CAS 225
+- `B06` - Finds CAS B06A and CAS B06B
+- `Tsai` - Finds CAS Tsai Performance Center
+
+### Combined Search
+Search using building code and room number together:
+- `CAS 225` - Finds CAS room 225 (with space)
+- `CAS225` - Also finds CAS room 225 (without space)
+- `CGS 111A` - Finds CGS room 111A
+
+<Note>
+  Search is case-insensitive, so `cas`, `CAS`, and `CaS` all work the same way.
+</Note>
+
+## Search Behavior
+
+### Auto-Expand Accordions
+
+When you enter a search query, the interface automatically:
+- Expands all building accordions that contain matching classrooms
+- Keeps them expanded while you're searching
+- Returns to collapsed state when you clear the search
+
+<Info>
+  When searching, you cannot manually collapse building accordions. This ensures all matching results remain visible.
+</Info>
+
+### Real-Time Filtering
+
+Search results update instantly as you type:
+- No need to press Enter or click a search button
+- Results appear within milliseconds of typing
+- Partial matches are supported (e.g., "Art" matches "Arts & Sciences")
+
+### Classroom Sorting
+
+Within search results, classrooms maintain their intelligent sorting:
+
+1. **Letter-prefixed rooms first** (e.g., B06, B12, B18)
+2. **Numeric rooms second** (e.g., 116, 201, 225)
+3. **Suffixes sorted alphabetically** (e.g., 111A before 111B)
+
+## Search UI Elements
+
+### Search Input
+- **Placeholder text**: "Search classrooms"
+- **Left icon**: Magnifying glass (search indicator)
+- **Right icon**: X button (appears when text is entered)
+- **Styling**: Rounded gray background with focus state
+
+### Clear Button
+
+The clear button (X icon) appears only when:
+- Text has been entered in the search field
+- Clicking it clears the search and resets the view
+- Hover effect changes from gray to darker gray
+
+## Implementation Details
+
+The search is implemented in the `SearchBar` component (`frontend/app/components/SearchBar.tsx:1`) and integrated with the `BuildingAccordion` component for filtering.
+
+### Key Features
+
+<CardGroup cols={2}>
+  <Card title="Instant Results" icon="bolt">
+    Search queries trigger immediate filtering with no delay
+  </Card>
+  
+  <Card title="Flexible Matching" icon="shuffle">
+    Matches building codes, names, and room numbers
+  </Card>
+  
+  <Card title="Smart Expansion" icon="up-right-and-down-left-from-center">
+    Auto-expands buildings with matching classrooms
+  </Card>
+  
+  <Card title="Clean Interface" icon="sparkles">
+    Clear button only appears when needed
+  </Card>
+</CardGroup>
+
+## Tips for Effective Searching
+
+<AccordionGroup>
+  <Accordion title="Search by floor">
+    Use the first digit of room numbers to find classrooms on a specific floor:
+    - `2` finds all 200-level rooms (2nd floor)
+    - `3` finds all 300-level rooms (3rd floor)
+    - `B` finds all basement-level rooms
+  </Accordion>
+  
+  <Accordion title="Find room variants">
+    Search for base room numbers to find all variants:
+    - `111` finds 111, 111A, 111B
+    - `204` finds 204A, 204B
+  </Accordion>
+  
+  <Accordion title="Quick building switch">
+    Use building codes for fast navigation:
+    - Type `CAS` to see only CAS rooms
+    - Type `CGS` to see only CGS rooms
+  </Accordion>
+</AccordionGroup>
+
+## Common Search Examples
+
+| Search Query | What It Finds |
+|--------------|---------------|
+| `116` | CAS 116 |
+| `CAS 2` | All CAS 200-level classrooms |
+| `CGS 5` | All CGS 500-level classrooms |
+| `B` | All basement classrooms (B06A, B06B, B12, etc.) |
+| `Arts` | All College of Arts & Sciences classrooms |
+| `Tsai` | CAS Tsai Performance Center |
+
+<Warning>
+  The search only filters classrooms in the current view. It does not affect the availability status or time slots displayed.
+</Warning>
+
+## Technical Notes
+
+For developers and advanced users:
+
+- Search is implemented with controlled component state in React
+- Query updates trigger re-filtering of the buildings object
+- The `matchesSearch` function (`frontend/app/components/BuildingAccordion.tsx:101`) handles all pattern matching
+- Search works on both building properties and individual classroom properties
+- No debouncing is applied - filtering happens on every keystroke for immediate feedback

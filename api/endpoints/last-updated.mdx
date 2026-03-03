@@ -1,0 +1,218 @@
+---
+title: 'GET /api/last-updated'
+description: 'Get the timestamp of when classroom data was last refreshed'
+---
+
+## Endpoint
+
+```
+GET /api/last-updated
+```
+
+Returns the timestamp of when the classroom availability data was last refreshed. This helps clients determine data freshness and whether a manual refresh might be needed.
+
+## Request
+
+This endpoint does not require any parameters.
+
+```bash cURL
+curl https://emptyclassroom-production.up.railway.app/api/last-updated
+```
+
+## Response
+
+<ResponseField name="last_updated" type="string | null" required>
+  ISO 8601 timestamp of the last data refresh in America/New_York timezone, or `null` if data has never been refreshed
+</ResponseField>
+
+## Response Examples
+
+### Data Available
+
+```json
+{
+  "last_updated": "2026-03-03T14:30:00.123456-05:00"
+}
+```
+
+### No Data Yet
+
+If the app has just started and no data has been fetched:
+
+```json
+{
+  "last_updated": null
+}
+```
+
+## Behavior
+
+### Timestamp Source
+
+The endpoint retrieves the timestamp from Redis key `classrooms:last_refresh`, which is updated when:
+
+1. **Manual refresh**: User triggers `/api/refresh` successfully
+2. **Automatic refresh on startup**: App wakes up and data is from a previous day
+3. **Cache miss**: `/api/open-classrooms` fetches fresh data when cache is empty
+
+### Timestamp Format
+
+Timestamps use full ISO 8601 format:
+
+- **Date and time**: `YYYY-MM-DDTHH:MM:SS.ffffff`
+- **Timezone offset**: `-05:00` (Eastern Standard Time) or `-04:00` (Eastern Daylight Time)
+- **Example**: `2026-03-03T14:30:00.123456-05:00`
+
+## Error Handling
+
+This endpoint is designed to be resilient and **never returns an HTTP error**. If there's an issue reading the timestamp from Redis:
+
+- Returns `{"last_updated": null}`
+- Logs the error server-side
+- Continues to serve the response
+
+```json Error Fallback
+{
+  "last_updated": null
+}
+```
+
+<Note>
+The fail-safe behavior ensures clients can always request this information without error handling complexity. A `null` value indicates either no refresh has occurred or there was an error reading the timestamp.
+</Note>
+
+## Example Usage
+
+### Check Data Freshness
+
+```javascript JavaScript
+const checkDataFreshness = async () => {
+  const response = await fetch(
+    'https://emptyclassroom-production.up.railway.app/api/last-updated'
+  );
+  const data = await response.json();
+  
+  if (!data.last_updated) {
+    console.log('No data available yet');
+    return;
+  }
+  
+  const lastUpdated = new Date(data.last_updated);
+  const now = new Date();
+  const hoursSinceUpdate = (now - lastUpdated) / (1000 * 60 * 60);
+  
+  if (hoursSinceUpdate > 24) {
+    console.log('Data is stale (>24 hours old)');
+  } else {
+    console.log(`Data is ${hoursSinceUpdate.toFixed(1)} hours old`);
+  }
+};
+```
+
+### Display to User
+
+```javascript React Example
+import { useEffect, useState } from 'react';
+
+function LastUpdatedBadge() {
+  const [lastUpdated, setLastUpdated] = useState(null);
+  
+  useEffect(() => {
+    const fetchLastUpdated = async () => {
+      const res = await fetch(
+        'https://emptyclassroom-production.up.railway.app/api/last-updated'
+      );
+      const data = await res.json();
+      setLastUpdated(data.last_updated);
+    };
+    
+    fetchLastUpdated();
+  }, []);
+  
+  if (!lastUpdated) return <span>No data</span>;
+  
+  const date = new Date(lastUpdated);
+  const timeAgo = getTimeAgo(date); // Your time formatting function
+  
+  return <span>Updated {timeAgo}</span>;
+}
+```
+
+```python Python
+import requests
+from datetime import datetime
+
+def get_data_age():
+    """Get the age of the cached data in hours"""
+    response = requests.get(
+        'https://emptyclassroom-production.up.railway.app/api/last-updated'
+    )
+    data = response.json()
+    
+    if not data['last_updated']:
+        return None
+    
+    last_updated = datetime.fromisoformat(data['last_updated'])
+    now = datetime.now(last_updated.tzinfo)
+    age_hours = (now - last_updated).total_seconds() / 3600
+    
+    return age_hours
+
+# Usage
+age = get_data_age()
+if age and age > 24:
+    print(f'Data is {age:.1f} hours old - consider refreshing')
+```
+
+```bash cURL
+curl https://emptyclassroom-production.up.railway.app/api/last-updated
+```
+
+## Comparison with `/api/open-classrooms`
+
+Both endpoints return last updated information:
+
+| Endpoint | Last Updated Info | Use Case |
+|----------|------------------|----------|
+| `/api/last-updated` | Lightweight, timestamp only | Quick freshness check without fetching classroom data |
+| `/api/open-classrooms` | Includes `last_updated` field in response | Get data and freshness in a single request |
+
+<Tip>
+Use `/api/last-updated` when you only need to check data freshness without loading all classroom data. It's faster and more bandwidth-efficient.
+</Tip>
+
+## Use Cases
+
+- **Data Freshness Indicators**: Display "Last updated X hours ago" in the UI
+- **Cache Validation**: Determine if client-side cached data is still valid
+- **Health Monitoring**: Check if the data refresh mechanism is working
+- **Conditional Refresh**: Trigger refresh only if data is older than a threshold
+
+## Best Practices
+
+<Info>
+Combine this endpoint with `/api/cooldown-status` to build smart refresh logic that only refreshes when data is stale AND cooldown is expired.
+</Info>
+
+```javascript Smart Refresh Example
+const shouldRefresh = async () => {
+  const [lastUpdated, cooldown] = await Promise.all([
+    fetch('https://emptyclassroom-production.up.railway.app/api/last-updated').then(r => r.json()),
+    fetch('https://emptyclassroom-production.up.railway.app/api/cooldown-status').then(r => r.json())
+  ]);
+  
+  // Refresh if data is >12 hours old and not in cooldown
+  const dataAge = lastUpdated.last_updated 
+    ? (Date.now() - new Date(lastUpdated.last_updated)) / (1000 * 60 * 60)
+    : Infinity;
+  
+  return dataAge > 12 && !cooldown.in_cooldown;
+};
+```
+
+## Notes
+
+- The timestamp reflects when data was **fetched**, not when it was **generated** by BU's system
+- Data is cached for 24 hours but may be refreshed more frequently
+- The timestamp is in Eastern Time regardless of the client's timezone
+- Parse the timestamp with timezone-aware libraries to handle DST correctly

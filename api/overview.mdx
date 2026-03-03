@@ -1,0 +1,104 @@
+---
+title: 'API Overview'
+description: 'Learn how to interact with the EmptyClassroom API'
+---
+
+## Introduction
+
+The EmptyClassroom API provides programmatic access to real-time classroom availability data at Boston University. The API is built with FastAPI and returns JSON responses.
+
+## Base URL
+
+All API requests should be made to:
+
+```
+https://emptyclassroom-production.up.railway.app
+```
+
+## Authentication
+
+The EmptyClassroom API is currently **publicly accessible** and does not require authentication. All endpoints can be accessed without API keys or tokens.
+
+<Note>
+While no authentication is required, the API implements rate limiting through a refresh cooldown mechanism to prevent abuse.
+</Note>
+
+## Rate Limiting
+
+The API implements a **30-minute cooldown** on the `/api/refresh` endpoint to prevent excessive requests to the upstream data source. You can check the current cooldown status using the `/api/cooldown-status` endpoint.
+
+### Cooldown Behavior
+
+- **Cooldown Period**: 30 minutes after each successful refresh
+- **Status Code**: `429 Too Many Requests` when cooldown is active
+- **Error Message**: Includes remaining time in minutes
+
+## Response Format
+
+All API responses are in JSON format with appropriate HTTP status codes:
+
+- `200 OK` - Successful request
+- `429 Too Many Requests` - Refresh cooldown is active
+- `500 Internal Server Error` - Server-side error
+
+## Data Freshness
+
+Classroom availability data is:
+
+- **Cached** for 24 hours
+- **Updated** automatically on app startup if data is stale
+- **Refreshable** manually via the `/api/refresh` endpoint (subject to cooldown)
+
+You can check when data was last updated using the `/api/last-updated` endpoint or the `last_updated` field in the `/api/open-classrooms` response.
+
+## Timezone
+
+All timestamps in the API are in **America/New_York** (Eastern Time) timezone and use ISO 8601 format.
+
+## CORS
+
+The API has CORS enabled for all origins (`*`), allowing requests from any domain.
+
+## Available Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Open Classrooms" icon="door-open" href="/api/endpoints/open-classrooms">
+    Get current classroom availability by building
+  </Card>
+  <Card title="Refresh Data" icon="arrows-rotate" href="/api/endpoints/refresh">
+    Trigger a manual data refresh
+  </Card>
+  <Card title="Cooldown Status" icon="clock" href="/api/endpoints/cooldown-status">
+    Check refresh cooldown status
+  </Card>
+  <Card title="Last Updated" icon="calendar-check" href="/api/endpoints/last-updated">
+    Get last data update timestamp
+  </Card>
+</CardGroup>
+
+## Getting Started
+
+Here's a simple example to get started:
+
+```bash
+# Get all open classrooms
+curl https://emptyclassroom-production.up.railway.app/api/open-classrooms
+
+# Check when data was last updated
+curl https://emptyclassroom-production.up.railway.app/api/last-updated
+```
+
+## Error Handling
+
+The API uses standard HTTP status codes and returns error details in the response body:
+
+```json
+{
+  "detail": "Error message describing what went wrong"
+}
+```
+
+Common errors to handle:
+
+- **429 on refresh**: Wait for the cooldown period to expire
+- **500 errors**: Temporary server issues, retry with exponential backoff

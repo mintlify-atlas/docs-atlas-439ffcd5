@@ -1,80 +1,298 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get started with EmptyClassroom in under 2 minutes
 ---
 
-## Get started in three steps
+## Finding Your First Empty Classroom
 
-Get your documentation site running locally and make your first customization.
+This guide will walk you through using EmptyClassroom to find available study spaces at Boston University.
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Steps>
+  <Step title="Visit EmptyClassroom">
+    Navigate to [emptyclassroom.com](https://emptyclassroom.com) in your web browser.
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    The homepage displays:
+    - **Last Updated Time:** When classroom data was last refreshed
+    - **Refresh Button:** Manually update availability (30-minute cooldown)
+    - **Building List:** All CAS and CGS buildings with real-time availability counts
+  </Step>
+
+  <Step title="View Available Classrooms">
+    Each building shows its current availability status:
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    ```typescript
+    // Buildings display format
+    "College of Arts & Sciences - CAS"
+    Status: "5 available" (green) or "unavailable" (red)
+    ```
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    Click on any building to expand and see detailed classroom availability.
+    
+    <Note>
+      The availability count updates automatically every minute based on the current time.
+    </Note>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Check Time Slots">
+    When you expand a building, you'll see all classrooms with their available time slots:
+    
+    ```
+    CAS 116                  🟢  9:00 AM - 11:00 AM
+                                 2:00 PM - 5:00 PM
+                                 7:00 PM - 11:00 PM
+    ```
+    
+    - **Green dot (🟢):** Currently available
+    - **Red dot (🔴):** Currently occupied
+    - **Green time:** Current active time slot
+    - **Gray time:** Future available slots
+    
+    Time slots update in real-time as you browse.
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Search for Specific Rooms">
+    Use the search bar to quickly find classrooms:
+    
+    <CodeGroup>
+    
+    ```text By Building Code
+    Search: "CAS"
+    Results: All College of Arts & Sciences classrooms
+    ```
+    
+    ```text By Room Number  
+    Search: "116"
+    Results: CAS 116 (if it exists)
+    ```
+    
+    ```text Combined Search
+    Search: "CAS 116" or "CAS116"
+    Results: Exact classroom match
+    ```
+    
+    ```text By Building Name
+    Search: "College of General Studies"
+    Results: All CGS classrooms
+    ```
+    
+    </CodeGroup>
+    
+    The search matches building codes, room numbers, and full building names. It works with or without spaces between the building code and room number.
+  </Step>
+</Steps>
 
-### Step 3: Go live
+## Understanding the Interface
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+### Classroom Display
 
-## Next steps
+Here's how classroom information is structured:
 
-Now that you have your docs running, explore these key features:
+```tsx
+// Classroom component structure from BuildingAccordion.tsx
+<div className="classroom-item">
+  <div className="flex items-center justify-between">
+    <span className="font-mono">CAS 116</span>
+    <div className={available ? 'bg-green-500' : 'bg-red-500'} />
+  </div>
+  {classroom.availability.map(slot => (
+    <div className={isActive ? 'text-green-600' : 'text-gray-700'}>
+      {formatTime(slot.start)} - {formatTime(slot.end)}
+    </div>
+  ))}
+</div>
+```
 
-<CardGroup cols={2}>
+### Availability Colors
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+- **Green Badge:** Room is currently available (has at least one active time slot)
+- **Red Badge:** Room is currently occupied or has no available slots
+- **Green Text:** This time slot is active right now
+- **Gray Text:** Future time slot (not yet active)
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+## Refreshing Data
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+### Manual Refresh
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+Click the **↻ Refresh** button to fetch the latest classroom availability from BU's scheduling system.
 
-</CardGroup>
+<Warning>
+  **Refresh Cooldown:** To prevent server overload, refreshes are limited to once every 30 minutes. The button will show remaining wait time during cooldown.
+</Warning>
+
+### How Refresh Works
+
+```python
+# backend/main.py:74-100
+@app.post('/api/refresh')
+async def refresh_data():
+    # Check cooldown period
+    if time_since_refresh < timedelta(minutes=REFRESH_COOLDOWN_MINUTES):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {remaining_minutes:.1f} more minutes."
+        )
+    
+    # Fetch fresh data
+    await update_cache()
+    
+    # Update timestamp
+    now = datetime.now(pytz.timezone('America/New_York'))
+    rd.set('classrooms:last_refresh', now.isoformat())
+    
+    return {"timestamp": now.isoformat()}
+```
+
+### Automatic Updates
+
+- **Time Display:** Updates every minute automatically
+- **Current Availability:** Recalculates which rooms are available based on current time
+- **Data Freshness:** Backend fetches new data on app startup if data is stale
+
+## Search Features
+
+### Smart Matching
+
+The search implementation from `SearchBar.tsx` and `BuildingAccordion.tsx`:
+
+```typescript
+// frontend/app/components/BuildingAccordion.tsx:101-124
+const matchesSearch = (building: Building, code: string, classroom?: Classroom) => {
+  const query = searchQuery.toLowerCase().trim();
+  if (!query) return true;
+
+  if (classroom) {
+    const withSpace = `${code} ${classroom.name}`.toLowerCase();
+    const withoutSpace = `${code}${classroom.name}`.toLowerCase();
+    return (
+      withSpace.includes(query) ||
+      withoutSpace.includes(query) ||
+      building.name.toLowerCase().includes(query)
+    );
+  }
+
+  return (
+    code.toLowerCase().includes(query) ||
+    building.name.toLowerCase().includes(query) ||
+    building.classrooms.some(room => {
+      const withSpace = `${code} ${room.name}`.toLowerCase();
+      const withoutSpace = `${code}${room.name}`.toLowerCase();
+      return withSpace.includes(query) || withoutSpace.includes(query);
+    })
+  );
+};
+```
+
+### Search Examples
+
+<CodeGroup>
+
+```text Find All CAS Rooms
+Input: "CAS"
+Matches: All 50+ CAS classrooms
+```
+
+```text Find Specific Room
+Input: "116"
+Matches: CAS 116, CGS 117A, CGS 117B (all containing "11")
+```
+
+```text Exact Room Search  
+Input: "CAS 116"
+Matches: CAS 116 only
+```
+
+```text By Building Name
+Input: "General Studies"
+Matches: All CGS classrooms
+```
+
+</CodeGroup>
+
+## Important Notes
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Building Access:** Some rooms may be restricted to specific colleges or departments. Check building access policies before heading to a classroom.
 </Note>
+
+<Note>
+  **Unofficial Use:** Displayed availability only reflects official schedules. Rooms may be occupied by study groups or unofficial meetings.
+</Note>
+
+<Note>
+  **Minimum Time Slots:** Only gaps of 30+ minutes are shown to ensure meaningful study time.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Building Details"
+    icon="building"
+    href="/features/buildings"
+  >
+    Learn about operating hours and specific classrooms in each building
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api/overview"
+  >
+    Integrate EmptyClassroom data into your own applications
+  </Card>
+  <Card
+    title="Submit Feedback"
+    icon="comment"
+    href="https://form.typeform.com/to/t17kzOqs"
+  >
+    Request features or report issues
+  </Card>
+  <Card
+    title="View Source Code"
+    icon="github"
+    href="https://github.com/justin9668/EmptyClassroom"
+  >
+    Contribute to the project on GitHub
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### No Classrooms Showing
+
+If you see "Loading data..." for an extended period:
+
+1. Check your internet connection
+2. Try refreshing the page
+3. Clear browser cache and reload
+
+### Refresh Button Disabled
+
+The refresh button may be disabled if:
+
+- A refresh was performed in the last 30 minutes (cooldown active)
+- Data is currently being refreshed (shows "Refreshing...")
+- The system is checking cooldown status
+
+Hover over the disabled button to see the remaining cooldown time.
+
+### Search Not Working
+
+If search isn't returning expected results:
+
+- Check spelling of building codes (CAS, CGS)
+- Try searching without spaces (e.g., "CAS116" instead of "CAS 116")
+- Search is case-insensitive, so "cas" works the same as "CAS"
+
+## Pro Tips
+
+<Tip>
+  **Best Study Times:** Late afternoons (4-6 PM) and evenings (7-9 PM) typically have the most available classrooms as scheduled classes wind down.
+</Tip>
+
+<Tip>
+  **Plan Ahead:** Check future time slots to plan your study session. Green text indicates the current slot, while gray text shows upcoming availability.
+</Tip>
+
+<Tip>
+  **Multiple Options:** If your first choice is occupied, the search function makes it easy to quickly find alternatives in the same building.
+</Tip>
