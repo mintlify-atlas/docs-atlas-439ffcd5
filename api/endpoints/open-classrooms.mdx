@@ -5,7 +5,7 @@ description: 'Retrieve current classroom availability organized by building'
 
 ## Endpoint
 
-```
+```http
 GET /api/open-classrooms
 ```
 
@@ -50,15 +50,11 @@ curl https://emptyclassroom-production.up.railway.app/api/open-classrooms
           
           <Expandable title="Time Slot Object">
             <ResponseField name="start" type="string" required>
-              Start time in HH:MM format (24-hour)
+              Start time in HH:MM:SS format (24-hour)
             </ResponseField>
             
             <ResponseField name="end" type="string" required>
-              End time in HH:MM format (24-hour)
-            </ResponseField>
-            
-            <ResponseField name="duration_minutes" type="number" required>
-              Duration of the available slot in minutes
+              End time in HH:MM:SS format (24-hour)
             </ResponseField>
           </Expandable>
         </ResponseField>
@@ -85,14 +81,12 @@ curl https://emptyclassroom-production.up.railway.app/api/open-classrooms
           "name": "116",
           "availability": [
             {
-              "start": "09:00",
-              "end": "10:30",
-              "duration_minutes": 90
+              "start": "09:00:00",
+              "end": "10:30:00"
             },
             {
-              "start": "14:00",
-              "end": "16:30",
-              "duration_minutes": 150
+              "start": "14:00:00",
+              "end": "16:30:00"
             }
           ]
         },
@@ -101,9 +95,8 @@ curl https://emptyclassroom-production.up.railway.app/api/open-classrooms
           "name": "201",
           "availability": [
             {
-              "start": "11:00",
-              "end": "12:00",
-              "duration_minutes": 60
+              "start": "11:00:00",
+              "end": "12:00:00"
             }
           ]
         }

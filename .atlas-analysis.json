@@ -52,7 +52,7 @@
     ]
   },
   "keyFeatures": [
-    "Real-time classroom availability for 70+ classrooms across CAS and CGS buildings",
+    "Real-time classroom availability for 77 classrooms across CAS and CGS buildings",
     "Search by building code or room number",
     "Smart refresh with cooldown protection",
     "Redis-based caching for performance",

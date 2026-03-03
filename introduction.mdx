@@ -5,18 +5,18 @@ description: Find empty classrooms to study in at Boston University
 
 <img
   className="block dark:hidden"
-  src="/images/hero-light.svg"
+  src="/images/hero-light.png"
   alt="EmptyClassroom Hero Light"
 />
 <img
   className="hidden dark:block"
-  src="/images/hero-dark.svg"
+  src="/images/hero-dark.png"
   alt="EmptyClassroom Hero Dark"
 />
 
 ## Welcome to EmptyClassroom
 
-EmptyClassroom is a real-time classroom availability platform designed specifically for Boston University students. Find the perfect quiet space to study across campus by viewing live availability for 70+ classrooms in CAS and CGS buildings.
+EmptyClassroom is a real-time classroom availability platform designed specifically for Boston University students. Find the perfect quiet space to study across campus by viewing live availability for 77 classrooms in CAS and CGS buildings.
 
 ## Core Features
 
@@ -43,7 +43,7 @@ EmptyClassroom is a real-time classroom availability platform designed specifica
     Refresh classroom data on-demand to get the latest availability from BU's scheduling system
   </Card>
   <Card
-    title="70+ Classrooms"
+    title="77 Classrooms"
     icon="building"
     href="/features/buildings"
   >
@@ -68,12 +68,12 @@ EmptyClassroom fetches data from Boston University's room reservation system and
 
 ### College of Arts & Sciences (CAS)
 - **Operating Hours:** 7:00 AM - 11:00 PM
-- **Classrooms:** 50+ rooms across multiple floors
+- **Classrooms:** 54 rooms across multiple floors
 - **Includes:** Lecture halls, seminar rooms, and specialized spaces like the Tsai Performance Center
 
 ### College of General Studies (CGS)
 - **Operating Hours:** 7:00 AM - 9:30 PM  
-- **Classrooms:** 20+ rooms optimized for smaller class sizes
+- **Classrooms:** 23 rooms optimized for smaller class sizes
 - **Includes:** Standard classrooms and divisible spaces
 
 ## Technical Stack
@@ -81,17 +81,20 @@ EmptyClassroom fetches data from Boston University's room reservation system and
 <CodeGroup>
 
 ```typescript Frontend
-// Next.js 14 with TypeScript
+// Next.js 15 with TypeScript
 // Real-time updates using React hooks
 
 const [buildings, setBuildings] = useState<OpenClassroomsResponse | null>(null);
 const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
 useEffect(() => {
-  const response = await fetch('/api/open-classrooms');
-  const data = await response.json();
-  setBuildings(data.buildings);
-  setLastUpdated(data.last_updated);
+  const fetchData = async () => {
+    const response = await fetch('/api/open-classrooms');
+    const data = await response.json();
+    setBuildings(data.buildings);
+    setLastUpdated(data.last_updated);
+  };
+  fetchData();
 }, []);
 ```
 
